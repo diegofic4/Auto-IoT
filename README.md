@@ -110,3 +110,54 @@ La aplicación permite conectar **un celular directamente con otro celular** sin
    python3 simulador_esp32.py --mode http --port 8080
    ```
    - Para Bluetooth RFCOMM desde PC: `python3 simulador_esp32.py --mode bt-server`.
+
+---
+
+## 7. Guía de Pruebas y Validación Técnica en Sala (7 a 10 minutos)
+
+Esta guía detalla el paso a paso exacto para verificar los 5 puntos exigidos en la dinámica de revisión docente:
+
+### 7.1 Inicio de Sesión y Persistencia Cifrada (Criterio A2 / ISO 27400)
+1. **Verificación de Cero Texto Plano:**
+   - En la pantalla de login, verificar en la tarjeta de auditoría que las credenciales no existen en texto plano, mostrando el `Salt (Base64)` de 16 bytes y el `Hash SHA-256`.
+   - Los datos residen en `EncryptedSharedPreferences` respaldados por Android Keystore (`AES256_GCM`).
+2. **Persistencia de Sesión:**
+   - Iniciar sesión con la cuenta demo `@operador_ot`.
+   - Cerrar forzosamente la aplicación desde las apps recientes de Android y volver a abrirla.
+   - **Resultado:** La sesión se restaura automáticamente ingresando directo al panel de teleoperación.
+
+### 7.2 Permisos en Runtime y Consentimiento Informado (Criterio A3 / ISO 27400)
+1. **Pop-up de Justificación Previa:**
+   - Al pulsar conectar en la Pestaña 2, se despliega el diálogo informativo en Compose explicando el uso técnico de Bluetooth/Wi-Fi antes de llamar al sistema operativo.
+2. **Prueba de Denegación (Tolerancia a Fallos):**
+   - Presionar "Continuar" y luego pulsar **Denegar** en el permiso de Android.
+   - **Resultado:** Cero crashes (sin cierres inesperados). La app permanece operativa, informa la restricción y habilita el botón hacia Ajustes.
+3. **Prueba de Concesión:**
+   - Otorgar los permisos para desbloquear los selectores de red.
+
+### 7.3 Demostración de Comunicación en Vivo (Criterio A4)
+1. **Modo Celular ↔ Celular o ESP32:**
+   - Iniciar el servidor en el Celular A (o encender el ESP32 / script Python).
+   - Conectar el Celular B ingresando la IP y puerto (o enlace Bluetooth RFCOMM).
+   - **Resultado:** El estado cambia a **"Conectado"** y la distancia ultrasónica fluctúa en tiempo real en la pantalla.
+2. **Teleoperación de 5 Direcciones:**
+   - Presionar `▲ ADELANTE`, `◄ IZQUIERDA`, `■ PARAR`, `DERECHA ►` y `▼ ATRÁS`, verificando la recepción inmediata de comandos.
+
+### 7.4 Prueba de Regla de Seguridad OT (Frenado Autónomo)
+1. Colocar un obstáculo frente al sensor a una distancia **menor o igual a 15 cm**.
+2. **Resultado:** Se activa el banner rojo **`⚠️ FRENO ACTIVO`** y el botón **`ADELANTE`** se bloquea automáticamente en la UI para impedir choques frontales, manteniendo activos el giro, retroceso y parada.
+
+### 7.5 Pruebas de Robustez (Criterio A5)
+1. **Rotación de Pantalla:**
+   - Con telemetría continua en vivo, rotar el teléfono de vertical a horizontal.
+   - **Resultado:** La interfaz se reorganiza en 2 columnas paralelas sin desconectarse ni reiniciar valores a cero (gestión en `ViewModelScope`).
+2. **Desconexión Forzada:**
+   - Con la telemetría activa, apagar bruscamente el Hotspot/Wi-Fi del emisor o detener el servidor.
+   - **Resultado:** La aplicación no se congela ni crashea; captura las excepciones de red en `Dispatchers.IO`, cierra los sockets de forma segura y actualiza el estado visual a **"Desconectado / Error de enlace"**.
+
+---
+
+## 8. Descarga Directa del Instalador (.apk)
+
+- **Versión Evaluada:** [Descargar APK v1.0.0 (ot-shield-monitor.apk)](https://github.com/diegofic4/Auto-IoT/releases/download/v1.0.0/ot-shield-monitor.apk)
+
