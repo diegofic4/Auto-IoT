@@ -132,6 +132,8 @@ fun PalettePickerDialog(
     onDismiss: () -> Unit
 ) {
     val currentColors = LocalAppPalette.current
+    val eyeComfortPalettes = AppPalette.entries.filter { it.isEyeComfort }
+    val tacticalPalettes = AppPalette.entries.filter { !it.isEyeComfort }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -156,7 +158,7 @@ fun PalettePickerDialog(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Elige el estilo visual más cómodo para tu vista",
+                    text = "Elige entre tonos suaves para la vista o alto contraste táctico",
                     style = MaterialTheme.typography.bodySmall,
                     color = currentColors.textSecondary
                 )
@@ -169,13 +171,63 @@ fun PalettePickerDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                AppPalette.entries.forEach { palette ->
+                // Encabezado Categoría 1: Simples y suaves para la vista (Descanso Visual)
+                Surface(
+                    color = currentColors.surfaceVariant,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            text = "🌿 SIMPLES Y DESCANSO VISUAL (SUAVES PARA LA VISTA)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = currentColors.primary
+                        )
+                        Text(
+                            text = "Tonos mate y cálidos sin brillo neón para usar por largo tiempo sin fatiga ocular.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = currentColors.textSecondary
+                        )
+                    }
+                }
+
+                eyeComfortPalettes.forEach { palette ->
                     PaletteSelectionItem(
                         palette = palette,
                         isSelected = palette == selectedPalette,
-                        onClick = {
-                            onSelectPalette(palette)
-                        }
+                        onClick = { onSelectPalette(palette) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Encabezado Categoría 2: Tácticas e Industriales (Alto Contraste)
+                Surface(
+                    color = currentColors.surfaceVariant,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            text = "⚡ ALTO CONTRASTE TÁCTICO / SCADA",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = currentColors.secondary
+                        )
+                        Text(
+                            text = "Colores intensos para monitoreo industrial y salas de control oscuras.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = currentColors.textSecondary
+                        )
+                    }
+                }
+
+                tacticalPalettes.forEach { palette ->
+                    PaletteSelectionItem(
+                        palette = palette,
+                        isSelected = palette == selectedPalette,
+                        onClick = { onSelectPalette(palette) }
                     )
                 }
             }

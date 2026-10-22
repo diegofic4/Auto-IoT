@@ -33,13 +33,16 @@ Para ofrecer una experiencia comercial intuitiva, ordenada y sin saturar una sol
    - Gestión de la cuenta activa, botón desplegable de paleta de colores, cambio de contraseña cifrada, cierre de sesión seguro y consola de tramas JSON recibidas de `/telemetria`.
 
 ### Botón / Ícono Desplegable de Paleta de Colores (`[Tema ▼]`)
-En lugar de ocupar espacio en la pantalla con listas largas de colores, la cabecera superior incluye el botón compacto **`[Tema: <Nombre> ▼]`** con ícono de paleta y doble punto cromático. Al pulsarlo, se despliega una ventana modal (`PalettePickerDialog`) con **6 temas de alto contraste** persistidos en `EncryptedSharedPreferences`:
-- **Cyber Cyan** (Oscuro — Cian eléctrico y turquesa de alto contraste).
-- **Ámbar Táctico** (Oscuro — Inspirado en consolas industriales SCADA).
-- **Verde Matrix** (Oscuro — Fósforo verde de máxima visibilidad).
-- **Neón Violeta** (Oscuro — Alta tecnología con contraste púrpura/magenta).
-- **Rojo Táctico** (Oscuro — Preservación visual nocturna y alerta).
-- **Luz de Día** (Claro — Fondo blanco limpio con letras oscuras para uso bajo luz solar directa).
+En lugar de ocupar espacio en la pantalla con listas largas de colores, la cabecera superior incluye el botón compacto **`[Tema: <Nombre> ▼]`** con ícono de paleta y doble punto cromático. Al pulsarlo, se despliega una ventana modal (`PalettePickerDialog`) con **10 temas organizados en 2 categorías** (persistidos en `EncryptedSharedPreferences`):
+
+1. **🌿 Simples y Descanso Visual (Suaves para la vista, cero fatiga ocular)**:
+   - **Pizarra Suave** (Oscuro Mate — Estilo *Nord/Slate* en gris azulado mate sin brillo neón).
+   - **Papel Cálido** (Claro Crema/Sepia — Fondo cálido tipo lectura para evitar deslumbramiento).
+   - **Salvia Natural** (Oscuro Relajante — Tonos verde bosque mate y salvia suave).
+   - **Brisa Marina** (Claro Minimalista — Blanco azulado limpio y azul corporativo).
+   - **Luz de Día** (Claro Nítido — Para uso bajo luz solar directa).
+2. **⚡ Alto Contraste Táctico / SCADA**:
+   - **Cyber Cyan**, **Ámbar Táctico**, **Verde Matrix**, **Neón Violeta** y **Rojo Táctico**.
 
 ---
 

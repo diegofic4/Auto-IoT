@@ -99,6 +99,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -1002,7 +1004,14 @@ private fun LiveTelemetryAndMotorControlCard(
                 }
             }
 
+            val haptic = LocalHapticFeedback.current
             val controlsSection: @Composable () -> Unit = {
+                val isAdvancing = uiState.estadoMotor == VehicleTelemetry.MOTOR_AVANZANDO
+                val isTurningLeft = uiState.estadoMotor == VehicleTelemetry.MOTOR_GIRANDO_IZQUIERDA
+                val isTurningRight = uiState.estadoMotor == VehicleTelemetry.MOTOR_GIRANDO_DERECHA
+                val isStopped = uiState.estadoMotor == VehicleTelemetry.MOTOR_DETENIDO
+                val isReversing = uiState.estadoMotor == VehicleTelemetry.MOTOR_RETROCEDIENDO
+
                 Column(modifier = Modifier.fillMaxWidth()) {
                     // Panel de Control de Movimiento y Giro del Vehículo (Cruceta de 5 Direcciones)
                     Text(
@@ -1013,7 +1022,7 @@ private fun LiveTelemetryAndMotorControlCard(
                     )
                     Text(
                         text = if (uiState.isForwardButtonEnabled) {
-                            "Controla el avance, giro a la izquierda/derecha, parada y retroceso en tiempo real."
+                            "Controla el avance, giro a la izquierda/derecha, parada y retroceso con respuesta táctil."
                         } else {
                             "El botón ADELANTE está bloqueado por obstáculo a ${uiState.distanciaCm} cm. Puedes doblar o retroceder."
                         },
@@ -1025,8 +1034,12 @@ private fun LiveTelemetryAndMotorControlCard(
 
                     // 1. FILA SUPERIOR: ADELANTE (/adelante)
                     Button(
-                        onClick = { onSendCommand(VehicleCommand.ADELANTE) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSendCommand(VehicleCommand.ADELANTE)
+                        },
                         enabled = uiState.isForwardButtonEnabled,
+                        border = if (isAdvancing) BorderStroke(2.5.dp, palette.textPrimary) else null,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = palette.statusSafe,
                             contentColor = palette.background,
@@ -1065,7 +1078,11 @@ private fun LiveTelemetryAndMotorControlCard(
                     ) {
                         // Botón IZQUIERDA (Doblar a la izquierda)
                         Button(
-                            onClick = { onSendCommand(VehicleCommand.IZQUIERDA) },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSendCommand(VehicleCommand.IZQUIERDA)
+                            },
+                            border = if (isTurningLeft) BorderStroke(2.5.dp, palette.textPrimary) else null,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = palette.primary,
                                 contentColor = palette.background
@@ -1092,7 +1109,11 @@ private fun LiveTelemetryAndMotorControlCard(
 
                         // Botón Central PARAR
                         Button(
-                            onClick = { onSendCommand(VehicleCommand.PARAR) },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSendCommand(VehicleCommand.PARAR)
+                            },
+                            border = if (isStopped) BorderStroke(2.dp, palette.textPrimary.copy(alpha = 0.7f)) else null,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = palette.statusAlert,
                                 contentColor = palette.textPrimary
@@ -1119,7 +1140,11 @@ private fun LiveTelemetryAndMotorControlCard(
 
                         // Botón DERECHA (Doblar a la derecha)
                         Button(
-                            onClick = { onSendCommand(VehicleCommand.DERECHA) },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSendCommand(VehicleCommand.DERECHA)
+                            },
+                            border = if (isTurningRight) BorderStroke(2.5.dp, palette.textPrimary) else null,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = palette.primary,
                                 contentColor = palette.background
@@ -1149,7 +1174,11 @@ private fun LiveTelemetryAndMotorControlCard(
 
                     // 3. FILA INFERIOR: ATRÁS (/atras)
                     Button(
-                        onClick = { onSendCommand(VehicleCommand.ATRAS) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSendCommand(VehicleCommand.ATRAS)
+                        },
+                        border = if (isReversing) BorderStroke(2.5.dp, palette.textPrimary) else null,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = palette.statusWarning,
                             contentColor = palette.background

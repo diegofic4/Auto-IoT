@@ -13,14 +13,61 @@ enum class AppPalette(
     val previewPrimary: Color,
     val previewAccent: Color,
     val isDarkTheme: Boolean,
+    val isEyeComfort: Boolean,
     val description: String
 ) {
+    NORDIC_SLATE(
+        id = "nordic_slate",
+        displayName = "Pizarra Suave",
+        previewPrimary = Color(0xFF7AA2F7),
+        previewAccent = Color(0xFF73DACA),
+        isDarkTheme = true,
+        isEyeComfort = true,
+        description = "Oscuro mate de descanso visual (estilo Nord), sin brillo neón para no cansar la vista"
+    ),
+    WARM_PAPER(
+        id = "warm_paper",
+        displayName = "Papel Cálido",
+        previewPrimary = Color(0xFF2B6CB0),
+        previewAccent = Color(0xFF319795),
+        isDarkTheme = false,
+        isEyeComfort = true,
+        description = "Claro crema/sepia suave anti-fatiga visual, ideal para lectura prolongada"
+    ),
+    FOREST_SAGE(
+        id = "forest_sage",
+        displayName = "Salvia Natural",
+        previewPrimary = Color(0xFF68D391),
+        previewAccent = Color(0xFF4FD1C5),
+        isDarkTheme = true,
+        isEyeComfort = true,
+        description = "Tonos verde salvia y bosque mate relajantes para la vista"
+    ),
+    OCEAN_BREEZE(
+        id = "ocean_breeze",
+        displayName = "Brisa Marina",
+        previewPrimary = Color(0xFF2563EB),
+        previewAccent = Color(0xFF0891B2),
+        isDarkTheme = false,
+        isEyeComfort = true,
+        description = "Tema claro minimalista, limpio y corporativo con tonos azul suave"
+    ),
+    DAYLIGHT_CLEAN(
+        id = "daylight_clean",
+        displayName = "Luz de Día",
+        previewPrimary = Color(0xFF0284C7),
+        previewAccent = Color(0xFF0D9488),
+        isDarkTheme = false,
+        isEyeComfort = true,
+        description = "Modo claro nítido para inspecciones de campo bajo luz solar directa"
+    ),
     CYBER_CYAN(
         id = "cyber_cyan",
         displayName = "Cyber Cyan",
         previewPrimary = Color(0xFF00E5FF),
         previewAccent = Color(0xFF1DE9B6),
         isDarkTheme = true,
+        isEyeComfort = false,
         description = "Estilo clásico OT/Cyberpunk con azul cian eléctrico y fondo nocturno profundo"
     ),
     TACTICAL_AMBER(
@@ -29,6 +76,7 @@ enum class AppPalette(
         previewPrimary = Color(0xFFFFB300),
         previewAccent = Color(0xFFFF9100),
         isDarkTheme = true,
+        isEyeComfort = false,
         description = "Paleta industrial SCADA / Maquinaria pesada con acentos dorados y ámbar"
     ),
     MATRIX_EMERALD(
@@ -37,6 +85,7 @@ enum class AppPalette(
         previewPrimary = Color(0xFF00E676),
         previewAccent = Color(0xFF69F0AE),
         isDarkTheme = true,
+        isEyeComfort = false,
         description = "Terminal verde de fósforo para inspección y ciberdefensa perimetral"
     ),
     SYNTH_VIOLET(
@@ -45,6 +94,7 @@ enum class AppPalette(
         previewPrimary = Color(0xFFC77DFF),
         previewAccent = Color(0xFFFF4081),
         isDarkTheme = true,
+        isEyeComfort = false,
         description = "Modo furtivo de alta tecnología con tonos violeta eléctrico y magenta"
     ),
     CRIMSON_OPS(
@@ -53,15 +103,8 @@ enum class AppPalette(
         previewPrimary = Color(0xFFFF3D00),
         previewAccent = Color(0xFFFF1744),
         isDarkTheme = true,
+        isEyeComfort = false,
         description = "Operaciones de máxima alerta y visión nocturna de alto contraste"
-    ),
-    DAYLIGHT_CLEAN(
-        id = "daylight_clean",
-        displayName = "Luz de Día",
-        previewPrimary = Color(0xFF0284C7),
-        previewAccent = Color(0xFF0D9488),
-        isDarkTheme = false,
-        description = "Modo claro de alto contraste para inspecciones de campo con luz solar directa"
     );
 
     companion object {
@@ -97,6 +140,90 @@ data class AppPaletteColors(
 
 fun getPaletteColors(palette: AppPalette): AppPaletteColors {
     return when (palette) {
+        AppPalette.NORDIC_SLATE -> AppPaletteColors(
+            palette = palette,
+            background = Color(0xFF1B2028),
+            surface = Color(0xFF242B35),
+            surfaceVariant = Color(0xFF2E3744),
+            cardBorder = Color(0xFF434F61),
+            primary = Color(0xFF7AA2F7),
+            primaryDim = Color(0xFF3D59A1),
+            secondary = Color(0xFF73DACA),
+            statusSafe = Color(0xFF4ADE80),
+            statusSafeBg = Color(0xFF193228),
+            statusWarning = Color(0xFFFBBF24),
+            statusWarningBg = Color(0xFF332B19),
+            statusAlert = Color(0xFFF87171),
+            statusAlertBg = Color(0xFF381E24),
+            textPrimary = Color(0xFFECEFF4),
+            textSecondary = Color(0xFFD8DEE9),
+            textMuted = Color(0xFF9AA5CE),
+            isDark = true
+        )
+
+        AppPalette.WARM_PAPER -> AppPaletteColors(
+            palette = palette,
+            background = Color(0xFFF7F3EB),
+            surface = Color(0xFFFFFDF9),
+            surfaceVariant = Color(0xFFEDE6D8),
+            cardBorder = Color(0xFFC5B9A5),
+            primary = Color(0xFF2B6CB0),
+            primaryDim = Color(0xFF2C5282),
+            secondary = Color(0xFF2C7A7B),
+            statusSafe = Color(0xFF2F855A),
+            statusSafeBg = Color(0xFFE6FFFA),
+            statusWarning = Color(0xFFB7791F),
+            statusWarningBg = Color(0xFFFEFCBF),
+            statusAlert = Color(0xFFC53030),
+            statusAlertBg = Color(0xFFFFF5F5),
+            textPrimary = Color(0xFF231F1C),
+            textSecondary = Color(0xFF4A433D),
+            textMuted = Color(0xFF70675E),
+            isDark = false
+        )
+
+        AppPalette.FOREST_SAGE -> AppPaletteColors(
+            palette = palette,
+            background = Color(0xFF151F1B),
+            surface = Color(0xFF1D2B25),
+            surfaceVariant = Color(0xFF273931),
+            cardBorder = Color(0xFF3E594E),
+            primary = Color(0xFF68D391),
+            primaryDim = Color(0xFF2F855A),
+            secondary = Color(0xFF4FD1C5),
+            statusSafe = Color(0xFF68D391),
+            statusSafeBg = Color(0xFF193529),
+            statusWarning = Color(0xFFF6AD55),
+            statusWarningBg = Color(0xFF332818),
+            statusAlert = Color(0xFFFC8181),
+            statusAlertBg = Color(0xFF381D21),
+            textPrimary = Color(0xFFF0FDF4),
+            textSecondary = Color(0xFFCBD5E1),
+            textMuted = Color(0xFF94A3B8),
+            isDark = true
+        )
+
+        AppPalette.OCEAN_BREEZE -> AppPaletteColors(
+            palette = palette,
+            background = Color(0xFFF0F6FC),
+            surface = Color(0xFFFFFFFF),
+            surfaceVariant = Color(0xFFE1ECF7),
+            cardBorder = Color(0xFF93B4D4),
+            primary = Color(0xFF2563EB),
+            primaryDim = Color(0xFF1D4ED8),
+            secondary = Color(0xFF0891B2),
+            statusSafe = Color(0xFF16A34A),
+            statusSafeBg = Color(0xFFDCFCE7),
+            statusWarning = Color(0xFFD97706),
+            statusWarningBg = Color(0xFFFEF3C7),
+            statusAlert = Color(0xFFDC2626),
+            statusAlertBg = Color(0xFFFEE2E2),
+            textPrimary = Color(0xFF0F172A),
+            textSecondary = Color(0xFF334155),
+            textMuted = Color(0xFF64748B),
+            isDark = false
+        )
+
         AppPalette.CYBER_CYAN -> AppPaletteColors(
             palette = palette,
             background = Color(0xFF070D14),
