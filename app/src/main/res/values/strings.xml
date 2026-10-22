@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">OT Shield Monitor</string>
+    <string name="login_title">ISO/IEC 27400 OT Station</string>
+    <string name="login_subtitle">Autenticación Criptográfica Local (SHA-256 + Salt &amp; AES-256 GCM)</string>
+    <string name="operator_id_label">ID de Operador OT</string>
+    <string name="password_label">Clave de Acceso</string>
+    <string name="btn_authenticate">Autenticar Operador</string>
+    <string name="btn_provision">Provisionar Credenciales</string>
+    <string name="dashboard_title">Consola OT / Telemetría</string>
+    <string name="disconnect_secure">Desconexión Segura</string>
+    <string name="logout_session">Cerrar Sesión Cifrada</string>
+    <string name="open_system_settings">Abrir Configuración del Sistema</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "OT Shield Monitor",
+  "description": "Estación de Monitoreo y Teleoperación OT (ISO/IEC 27400) para Vehículo de Inspección IoT basado en ESP32 (HC-SR04, Puente H L298N, Wi-Fi HTTP/Sockets y Bluetooth RFCOMM).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
