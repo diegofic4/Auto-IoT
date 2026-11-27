@@ -130,12 +130,12 @@ El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El 
 | Dispositivo | Android | Resultado |
 | --- | --- | --- |
 | Teléfono del equipo | Modelo y versión por completar | El equipo confirmó funcionamiento físico de sensor, app y motor antes de la actualización ES3. |
-| Android Emulator x86_64 | API 37 | APK 1.1 instalado. Se verificó arranque sin cuentas preconfiguradas y creación de una cuenta local. |
+| Android Emulator x86_64 | API 37 | APK 1.1 instalado. Arrancó sin cuentas preconfiguradas y permitió crear una cuenta local. Con el banco virtual, mostró lecturas con hora y recuperó dos lecturas en SQLite con IDs distintos después de simular una caída. |
 
 ## 10. Cómo compilar y ejecutar
 
 - **Firmware.** Abrir [esp32.ino](firmware/esp32/esp32.ino) dentro de su carpeta en Arduino IDE 2.3.11 con **esp32 de Espressif Systems 3.3.12** y la placa **ESP32 Dev Module**. Copiar la plantilla a `wifi_secrets.h`, escribir la clave propia y conservar `AUTO_IOT_USE_SERVOS 0` en `opciones.h`. Cargar a 115200 por USB. [Instrucciones de firmware](firmware/esp32/README.md)
-- **Android.** Abrir la raíz en Android Studio con JDK integrado, Gradle 9.3.1 y SDK de compilación 36.1. Ejecutar `gradle :app:assembleDebug` o **Build → Build APK(s)**. El resultado se genera en `app/build/outputs/apk/debug/app-debug.apk`. La distribución se guarda fuera del árbol fuente en [GitHub Releases](https://github.com/diegofic4/Auto-IoT/releases). El APK de la evaluación usa firma de depuración.
+- **Android.** Abrir la raíz en Android Studio con JDK integrado, Gradle 9.3.1 y SDK de compilación 36.1. Ejecutar `gradle :app:assembleDebug` o **Build → Build APK(s)**. El resultado se genera en `app/build/outputs/apk/debug/app-debug.apk`. El APK de la evaluación usa firma de depuración. [Descarga de Auto-IoT 1.1](https://github.com/diegofic4/Auto-IoT/releases/tag/es3-v1.1)
 - **Arranque.** Asegurar el auto con las ruedas libres, alimentar la ESP32 por USB, conectar las pilas del motor y unir el teléfono a `Auto_IoT_Control`. Crear una cuenta local, elegir **Wi-Fi Local (ESP32)** y conectar a `192.168.4.1:80`.
 
 Para compilar por primera vez, generar `debug.keystore` en la raíz con el `keytool` del JDK. Los parámetros siguientes son los del perfil local de depuración de Android. El almacén queda excluido de Git.
@@ -160,3 +160,4 @@ keytool -genkeypair -keystore debug.keystore -storepass android -alias androidde
 - El prototipo utiliza un motor y un L298N. El giro independiente, el servo y la cámara quedan fuera del montaje evaluado.
 - Las lecturas se recuperan dentro de la capacidad de NVS y mientras la ESP32 recibe alimentación para capturarlas. Los datos ya confirmados quedan en Android.
 - El protocolo podría incorporar autenticación por dispositivo y cifrado de aplicación. El perfil de prueba conserva el modo de preferencias privadas de Android si Android Keystore no está disponible.
+- El firmware ES3 compiló con Arduino ESP32 3.3.12. El banco C verificó el corte de ENA a 15 cm y la parada por pérdida de enlace. La recuperación del APK se probó con el historial simulado del banco. Queda por repetir la sincronización con NVS real y comprobar la versión 1.1 en el teléfono del equipo.
