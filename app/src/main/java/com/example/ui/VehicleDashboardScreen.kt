@@ -316,7 +316,7 @@ fun VehicleDashboardScreen(
             // Banner de Alerta Crítica "⚠️ FRENO ACTIVO" cuando distancia <= 15 cm o frenoActivo == true
             item {
                 AnimatedVisibility(visible = uiState.isCriticalBrakeAlert) {
-                    EmergencyBrakeBanner(distanciaCm = uiState.distanciaCm)
+                    EmergencyBrakeBanner(uiState.distanciaCm, uiState.distanceValid)
                 }
             }
 
@@ -408,6 +408,7 @@ fun VehicleDashboardScreen(
                     item {
                         ProtocolAuditConsoleCard(
                             telemetryHistory = uiState.telemetryHistory,
+                            archivedHistory = uiState.archivedHistory,
                             systemLogs = uiState.systemEventLog,
                             onClearLogs = onClearLogs
                         )
@@ -731,7 +732,7 @@ private fun QuickStartBannerCard(
  * Banner Crítico en color rojo cuando `distancia <= 15 cm` o `frenoActivo == true`.
  */
 @Composable
-private fun EmergencyBrakeBanner(distanciaCm: Int) {
+private fun EmergencyBrakeBanner(distanciaCm: Int, distanceValid: Boolean) {
     val palette = LocalAppPalette.current
 
     Card(
@@ -757,14 +758,16 @@ private fun EmergencyBrakeBanner(distanciaCm: Int) {
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "⚠️ FRENO ACTIVO — OBSTÁCULO A $distanciaCm CM",
+                    text = if (distanceValid) "⚠️ FRENO ACTIVO — OBSTÁCULO A $distanciaCm CM"
+                    else "FRENO ACTIVO · SENSOR SIN ECO",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = palette.statusAlert
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Distancia crítica (<= 15 cm). El botón ADELANTE se ha bloqueado por seguridad. Usa ATRÁS para alejar el vehículo.",
+                    text = if (distanceValid) "Distancia crítica (≤ 15 cm). El avance está bloqueado."
+                    else "El avance está bloqueado hasta que el sensor vuelva a medir.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = palette.textPrimary
                 )
@@ -901,18 +904,26 @@ private fun LiveTelemetryAndMotorControlCard(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "${uiState.distanciaCm} cm",
+                                text = if (uiState.distanceValid) "${uiState.distanciaCm} cm" else "Sin eco",
                                 style = MaterialTheme.typography.displayLarge,
                                 color = distanceAccentColor,
                                 modifier = Modifier.testTag("distance_cm_value")
                             )
                             Spacer(modifier = Modifier.height(6.dp))
+                            uiState.lastReadingEpochMs?.let { receivedAt ->
+                                Text(
+                                    text = "Última lectura · ${formatReadingTime(receivedAt)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary
+                                )
+                            }
                             Surface(
                                 color = distanceAccentColor.copy(alpha = 0.16f),
                                 shape = RoundedCornerShape(50)
                             ) {
                                 Text(
                                     text = when {
+                                        !uiState.distanceValid -> "SIN ECO VÁLIDO · FRENO ACTIVO"
                                         isCritical -> "⚠️ PELIGRO CRÍTICO (<= 15 cm) — FRENO ACTIVO"
                                         isCaution -> "PRECAUCIÓN (16 - 35 cm) — OBSTÁCULO CERCANO"
                                         else -> "CAMINO DESPEJADO (> 35 cm) — OPERACIÓN SEGURA"
@@ -1024,7 +1035,8 @@ private fun LiveTelemetryAndMotorControlCard(
                         text = if (uiState.isForwardButtonEnabled) {
                             "Controla el avance, giro a la izquierda/derecha, parada y retroceso con respuesta táctil."
                         } else {
-                            "El botón ADELANTE está bloqueado por obstáculo a ${uiState.distanciaCm} cm. Puedes doblar o retroceder."
+                            if (uiState.distanceValid) "El avance está bloqueado por un obstáculo a ${uiState.distanciaCm} cm."
+                            else "El avance está bloqueado porque el sensor no devuelve un eco válido."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (uiState.isForwardButtonEnabled) palette.textSecondary else palette.statusAlert
@@ -1062,7 +1074,7 @@ private fun LiveTelemetryAndMotorControlCard(
                             text = if (uiState.isForwardButtonEnabled) {
                                 "ADELANTE (Avanzar)"
                             } else {
-                                "ADELANTE BLOQUEADO (FRENO <= 15 CM)"
+                                "ADELANTE BLOQUEADO"
                             },
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
@@ -2259,11 +2271,13 @@ private fun UserProfileAndSecurityDialog(
 @Composable
 private fun ProtocolAuditConsoleCard(
     telemetryHistory: List<VehicleTelemetry>,
+    archivedHistory: List<VehicleTelemetry>,
     systemLogs: List<String>,
     onClearLogs: () -> Unit
 ) {
     val palette = LocalAppPalette.current
-    var showJsonTab by rememberSaveable { mutableStateOf(true) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    val displayReadings = if (selectedTab == 1) archivedHistory else telemetryHistory
 
     Card(
         modifier = Modifier
@@ -2316,18 +2330,27 @@ private fun ProtocolAuditConsoleCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
-                    selected = showJsonTab,
-                    onClick = { showJsonTab = true },
-                    label = { Text("Tramas JSON (${telemetryHistory.size})") },
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    label = { Text("Tramas") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = palette.primary.copy(alpha = 0.2f),
                         selectedLabelColor = palette.primary
                     )
                 )
                 FilterChip(
-                    selected = !showJsonTab,
-                    onClick = { showJsonTab = false },
-                    label = { Text("Eventos (${systemLogs.size})") },
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    label = { Text("Recuperadas") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = palette.primary.copy(alpha = 0.2f),
+                        selectedLabelColor = palette.primary
+                    )
+                )
+                FilterChip(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    label = { Text("Eventos") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = palette.primary.copy(alpha = 0.2f),
                         selectedLabelColor = palette.primary
@@ -2339,16 +2362,17 @@ private fun ProtocolAuditConsoleCard(
             HorizontalDivider(color = palette.cardBorder)
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (showJsonTab) {
-                if (telemetryHistory.isEmpty()) {
+            if (selectedTab != 2) {
+                if (displayReadings.isEmpty()) {
                     Text(
-                        text = "Aún no se han recibido tramas. Conéctate a otro celular, al ESP32 o activa el Modo Demo en la pestaña de Control.",
+                        text = if (selectedTab == 1) "Aún no hay lecturas recuperadas del ESP32."
+                        else "Aún no se han recibido tramas.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = palette.textSecondary
                     )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        telemetryHistory.take(8).forEach { pkt ->
+                        displayReadings.take(8).forEach { pkt ->
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
@@ -2378,6 +2402,16 @@ private fun ProtocolAuditConsoleCard(
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
+                                    val capturedAt = pkt.capturedAtEpochMs
+                                    Text(
+                                        text = if (pkt.archived && capturedAt != null) {
+                                            "Captura estimada · ${formatReadingTime(capturedAt)}"
+                                        } else {
+                                            "Recibida · ${formatReadingTime(pkt.timestampEpochMs)}"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = palette.textSecondary
+                                    )
                                     Text(
                                         text = pkt.rawJson,
                                         style = MaterialTheme.typography.bodySmall,
@@ -2410,3 +2444,6 @@ private fun ProtocolAuditConsoleCard(
         }
     }
 }
+
+private fun formatReadingTime(epochMs: Long): String =
+    java.text.SimpleDateFormat("dd/MM HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(epochMs))

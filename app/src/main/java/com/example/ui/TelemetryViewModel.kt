@@ -17,10 +17,12 @@ import com.example.security.SecurityAuditInfo
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 /**
  * Estado inmutable de la UI de Teleoperación y Monitoreo del Vehículo ESP32.
@@ -51,10 +53,13 @@ data class VehicleUiState(
     // 4. Telemetría en Vivo del Vehículo (HC-SR04 + Puente H L298N + LED Advertencia)
     val connectionState: ConnectionState = ConnectionState.Disconnected,
     val distanciaCm: Int = 45,
+    val distanceValid: Boolean = true,
+    val lastReadingEpochMs: Long? = null,
     val estadoMotor: String = VehicleTelemetry.MOTOR_DETENIDO,
     val frenoActivo: Boolean = false,
     val hasReceivedFirstPacket: Boolean = false,
     val telemetryHistory: List<VehicleTelemetry> = emptyList(),
+    val archivedHistory: List<VehicleTelemetry> = emptyList(),
     val systemEventLog: List<String> = emptyList(),
 
     // 5. Estadísticas de Misión OT
@@ -94,9 +99,11 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
     val uiState: StateFlow<VehicleUiState> = _uiState.asStateFlow()
 
     private val esp32WifiClient = Esp32WifiClient(
+        context = application,
         externalScope = viewModelScope,
         onStateChanged = ::handleConnectionStateChange,
         onTelemetryReceived = ::handleIncomingTelemetry,
+        onArchiveRestored = { records -> _uiState.update { it.copy(archivedHistory = records) } },
         onSystemLog = ::appendSystemLog
     )
 
@@ -116,6 +123,17 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
             com.example.ui.theme.AppPalette.CYBER_CYAN.id
         )
         val initialPalette = com.example.ui.theme.AppPalette.fromId(savedPaletteId)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = esp32WifiClient.recentStoredReadings(MAX_TELEMETRY_HISTORY)
+            val archived = esp32WifiClient.recentStoredReadings(MAX_TELEMETRY_HISTORY, archivedOnly = true)
+            _uiState.update { state ->
+                state.copy(
+                    telemetryHistory = state.telemetryHistory.ifEmpty { saved },
+                    archivedHistory = state.archivedHistory.ifEmpty { archived }
+                )
+            }
+        }
 
         _uiState.update { state ->
             state.copy(
@@ -382,7 +400,8 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
         val currentState = _uiState.value
         if (command == VehicleCommand.ADELANTE && currentState.isCriticalBrakeAlert) {
             appendSystemLog(
-                "⚠️ SEGURIDAD OT: Orden ADELANTE bloqueada (distancia = ${currentState.distanciaCm} cm <= 15 cm)."
+                if (currentState.distanceValid) "Orden ADELANTE bloqueada a ${currentState.distanciaCm} cm."
+                else "Orden ADELANTE bloqueada. Sensor sin eco válido."
             )
             return
         }
@@ -390,7 +409,11 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.update {
             it.copy(
                 lastCommandDispatched = "${command.displayLabel} (${command.endpointPath})",
-                estadoMotor = command.expectedMotorState
+                estadoMotor = if (currentState.selectedTransport == TransportMode.BLUETOOTH_RFCOMM) {
+                    command.expectedMotorState
+                } else {
+                    it.estadoMotor
+                }
             )
         }
 
@@ -449,6 +472,8 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
 
             state.copy(
                 distanciaCm = telemetry.distancia,
+                distanceValid = telemetry.distanceValid,
+                lastReadingEpochMs = telemetry.timestampEpochMs,
                 estadoMotor = telemetry.estadoMotor,
                 frenoActivo = telemetry.isEmergencyBrakeActive,
                 hasReceivedFirstPacket = true,

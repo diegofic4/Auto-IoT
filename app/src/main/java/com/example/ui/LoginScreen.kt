@@ -77,7 +77,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.security.AuthRepository
 import com.example.security.SecurityAuditInfo
 import com.example.ui.theme.AppPalette
 import com.example.ui.theme.CyberBackground
@@ -134,7 +133,7 @@ fun LoginScreen(
     var isRegisterTab by rememberSaveable { mutableStateOf(false) }
 
     // Campos de Iniciar Sesión
-    var loginUsername by rememberSaveable { mutableStateOf(AuthRepository.DEFAULT_OPERATOR_ID) }
+    var loginUsername by rememberSaveable { mutableStateOf("") }
     var loginPassword by rememberSaveable { mutableStateOf("") }
     var showLoginPassword by rememberSaveable { mutableStateOf(false) }
 
@@ -479,38 +478,6 @@ fun LoginScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Botón amigable de 1 toque para usar la cuenta demo en evaluación
-                        OutlinedButton(
-                            onClick = {
-                                loginUsername = AuthRepository.DEFAULT_OPERATOR_ID
-                                loginPassword = AuthRepository.DEFAULT_INITIAL_KEY
-                                onLoginSubmit(
-                                    AuthRepository.DEFAULT_OPERATOR_ID,
-                                    AuthRepository.DEFAULT_INITIAL_KEY
-                                )
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, CyberTeal.copy(alpha = 0.6f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("quick_demo_login_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = CyberTeal,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Entrar con Cuenta Demo (operador_ot)",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = CyberTeal
-                            )
-                        }
                     } else {
                         // =========================================================
                         // PESTAÑA 2: CREAR CUENTA NUEVA
@@ -810,16 +777,7 @@ fun LoginScreen(
                                 AuditRow("Bóveda:", "EncryptedSharedPreferences (AES256_GCM)")
                                 AuditRow("Cuenta Activa:", "${auditInfo.fullName} (@${auditInfo.operatorId})")
                                 AuditRow("Rol:", auditInfo.role)
-                                AuditRow("Salt (Base64):", auditInfo.saltPreviewBase64.ifEmpty { "N/A" })
-                                AuditRow(
-                                    "Hash SHA-256:",
-                                    if (auditInfo.passwordHashSha256.length >= 24) {
-                                        "${auditInfo.passwordHashSha256.take(16)}...${auditInfo.passwordHashSha256.takeLast(12)}"
-                                    } else {
-                                        auditInfo.passwordHashSha256
-                                    }
-                                )
-                                AuditRow("Texto Plano:", "0 bytes (Cumplimiento total ISO 27400)")
+                                AuditRow("Contraseña:", "Verificador SHA-256 con salt individual")
                             }
                         }
                     }

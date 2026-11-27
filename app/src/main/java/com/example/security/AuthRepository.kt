@@ -24,8 +24,6 @@ data class SecurityAuditInfo(
     val operatorId: String,
     val fullName: String,
     val role: String,
-    val saltPreviewBase64: String,
-    val passwordHashSha256: String,
     val isSessionActive: Boolean,
     val failedAttempts: Int,
     val lastAuthEpochSeconds: Long,
@@ -53,36 +51,29 @@ class AuthRepository(private val cryptoManager: CryptoManager) {
         private const val KEY_FAILED_ATTEMPTS = "ot_failed_login_attempts"
         private const val KEY_LAST_AUTH_TIMESTAMP = "ot_last_auth_epoch_sec"
 
-        // Cuenta predeterminada de demostración (se hashea en el primer arranque)
-        const val DEFAULT_OPERATOR_ID = "operador_ot"
-        const val DEFAULT_INITIAL_KEY = "Iso27400#OT"
-        const val DEFAULT_FULL_NAME = "Operador Principal OT"
-        const val DEFAULT_ROLE = "Supervisor de Teleoperación"
+        private const val KEY_LEGACY_ACCOUNT_REMOVED = "ot_legacy_demo_removed"
     }
 
     init {
-        ensureDefaultAccountExists()
+        removeLegacyDemoAccount()
     }
 
-    private fun ensureDefaultAccountExists() {
+    private fun removeLegacyDemoAccount() {
+        val prefs = cryptoManager.encryptedPrefs
+        if (prefs.getBoolean(KEY_LEGACY_ACCOUNT_REMOVED, false)) return
         val accounts = loadAllAccounts()
-        if (accounts.isEmpty()) {
-            val salt = cryptoManager.generateSaltBase64()
-            val hash = cryptoManager.hashPasswordSha256(DEFAULT_INITIAL_KEY, salt)
-            val defaultAccount = OperatorAccount(
-                username = DEFAULT_OPERATOR_ID,
-                fullName = DEFAULT_FULL_NAME,
-                role = DEFAULT_ROLE,
-                saltBase64 = salt,
-                passwordHashSha256 = hash,
-                createdAtEpochSec = System.currentTimeMillis() / 1000L
-            )
-            saveAllAccounts(listOf(defaultAccount))
-            cryptoManager.encryptedPrefs.edit {
-                putString(KEY_ACTIVE_USERNAME, DEFAULT_OPERATOR_ID)
+        val remaining = accounts.filterNot { account ->
+            account.username == "operador_ot" && account.fullName == "Operador Principal OT" &&
+                account.role == "Supervisor de Teleoperación"
+        }
+        if (remaining.size != accounts.size) saveAllAccounts(remaining)
+        val active = prefs.getString(KEY_ACTIVE_USERNAME, null)
+        prefs.edit {
+            if (remaining.none { it.username == active }) {
+                remove(KEY_ACTIVE_USERNAME)
                 putBoolean(KEY_SESSION_ACTIVE, false)
-                putInt(KEY_FAILED_ATTEMPTS, 0)
             }
+            putBoolean(KEY_LEGACY_ACCOUNT_REMOVED, true)
         }
     }
 
@@ -247,7 +238,7 @@ class AuthRepository(private val cryptoManager: CryptoManager) {
 
     fun getActiveAccount(): OperatorAccount? {
         val accounts = loadAllAccounts()
-        val activeUsername = cryptoManager.encryptedPrefs.getString(KEY_ACTIVE_USERNAME, DEFAULT_OPERATOR_ID)
+        val activeUsername = cryptoManager.encryptedPrefs.getString(KEY_ACTIVE_USERNAME, null)
         return accounts.find { it.username.equals(activeUsername, ignoreCase = true) }
             ?: accounts.firstOrNull()
     }
@@ -257,11 +248,9 @@ class AuthRepository(private val cryptoManager: CryptoManager) {
         val accounts = loadAllAccounts()
         val active = getActiveAccount()
         return SecurityAuditInfo(
-            operatorId = active?.username ?: DEFAULT_OPERATOR_ID,
-            fullName = active?.fullName ?: DEFAULT_FULL_NAME,
-            role = active?.role ?: DEFAULT_ROLE,
-            saltPreviewBase64 = active?.saltBase64 ?: "",
-            passwordHashSha256 = active?.passwordHashSha256 ?: "",
+            operatorId = active?.username.orEmpty(),
+            fullName = active?.fullName ?: "Sin cuenta activa",
+            role = active?.role.orEmpty(),
             isSessionActive = prefs.getBoolean(KEY_SESSION_ACTIVE, false),
             failedAttempts = prefs.getInt(KEY_FAILED_ATTEMPTS, 0),
             lastAuthEpochSeconds = prefs.getLong(KEY_LAST_AUTH_TIMESTAMP, 0L),
@@ -278,9 +267,9 @@ class AuthRepository(private val cryptoManager: CryptoManager) {
                 val obj = arr.getJSONObject(i)
                 list.add(
                     OperatorAccount(
-                        username = obj.optString("username", DEFAULT_OPERATOR_ID),
-                        fullName = obj.optString("fullName", DEFAULT_FULL_NAME),
-                        role = obj.optString("role", DEFAULT_ROLE),
+                        username = obj.getString("username"),
+                        fullName = obj.getString("fullName"),
+                        role = obj.optString("role", "Operador"),
                         saltBase64 = obj.optString("saltBase64", ""),
                         passwordHashSha256 = obj.optString("passwordHashSha256", ""),
                         createdAtEpochSec = obj.optLong("createdAtEpochSec", 0L)

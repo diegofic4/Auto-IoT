@@ -270,6 +270,8 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    # Un aviso del simulador no debe interrumpir las respuestas HTTP en consolas Windows.
+    sys.stdout.reconfigure(errors="backslashreplace")
     args = parse_args()
     if args.mode == "http":
         run_http_simulator(args.bind, args.port)

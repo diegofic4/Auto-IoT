@@ -1,0 +1,54 @@
+name: Auto-IoT, obstáculo y parada en GPIO
+version: 1
+steps:
+  - wait-serial: 'UART:'
+  - set-control:
+      part-id: sonar
+      name: distance
+      value: 30
+  - delay: 300ms
+  - expect-pin:
+      part-id: esp32
+      name: '27'
+      value: 0
+  - write-serial: 'W'
+  - wait-serial: 'ACK W | AVANZANDO'
+  - expect-pin:
+      part-id: esp32
+      name: '25'
+      value: 1
+  - expect-pin:
+      part-id: esp32
+      name: '26'
+      value: 0
+  - expect-pin:
+      part-id: esp32
+      name: '27'
+      value: 1
+  - set-control:
+      part-id: sonar
+      name: distance
+      value: 10
+  - delay: 350ms
+  - expect-pin:
+      part-id: esp32
+      name: '27'
+      value: 0
+  - write-serial: 'W'
+  - wait-serial: 'ERR W | OBSTACULO'
+  - write-serial: 'S'
+  - wait-serial: 'ACK S | RETROCEDIENDO'
+  - expect-pin:
+      part-id: esp32
+      name: '26'
+      value: 1
+  - expect-pin:
+      part-id: esp32
+      name: '27'
+      value: 1
+  - write-serial: 'X'
+  - wait-serial: 'ACK X | DETENIDO'
+  - expect-pin:
+      part-id: esp32
+      name: '27'
+      value: 0

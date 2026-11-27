@@ -1,0 +1,5 @@
+[wokwi]
+version = 1
+firmware = '../build/wokwi/esp32.ino.merged.bin'
+elf = '../build/wokwi/esp32.ino.elf'
+vcdFile = '../build/wokwi/auto-iot-traccion.vcd'

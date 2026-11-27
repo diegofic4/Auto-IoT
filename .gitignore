@@ -1,18 +1,37 @@
+# Android Studio y Gradle
 *.iml
-.gradle
-.kotlin
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+.gradle/
+.kotlin/
+.idea/
 local.properties
+/captures/
+.externalNativeBuild/
+.cxx/
+build/
+
+# El APK se distribuye en GitHub Releases
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Credenciales locales
+*.jks
+*.keystore
+secrets.h
+wifi_secrets.h
+secrets.properties
 .env
-debug.keystore
+google-services.json
+
+# Arduino y simulaciones locales
+.pio/
+.vscode/
+*.elf
+*.bin
+*.hex
+__pycache__/
+
+# Archivos temporales
+.DS_Store
+Thumbs.db

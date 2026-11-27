@@ -1,0 +1,25 @@
+menu "Auto-IoT"
+
+    config AUTO_IOT_WIFI_PASSWORD
+        string "Contrasena WPA2 de Auto_IoT_Control (8 a 63 caracteres)"
+        default ""
+        help
+            Escribe una contrasena propia. Si se deja vacia o fuera de rango,
+            el equipo conserva el control serial y no abre una red sin clave.
+
+    choice AUTO_IOT_DRIVE
+        prompt "Actuadores de traccion"
+        default AUTO_IOT_DRIVE_L298N
+
+        config AUTO_IOT_DRIVE_L298N
+            bool "Un motor DC y L298N (IO25, IO26, IO27)"
+
+        config AUTO_IOT_DRIVE_SERVOS
+            bool "Dos servos (IO12, IO14), como en el programa original"
+    endchoice
+
+    config AUTO_IOT_OLED
+        bool "Mostrar telemetria en OLED SSD1306 (IO21, IO22)"
+        default n
+
+endmenu

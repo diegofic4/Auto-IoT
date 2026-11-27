@@ -1,6 +1,5 @@
 package com.example.model
 
-import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 
@@ -24,7 +23,11 @@ data class VehicleTelemetry(
     val timestampEpochMs: Long = System.currentTimeMillis(),
     val rawJson: String = "",
     val sourceTransport: String = "Wi-Fi HTTP",
-    val sequenceNumber: Long = 0L
+    val sequenceNumber: Long = 0L,
+    val distanceValid: Boolean = true,
+    val readingId: String? = null,
+    val archived: Boolean = false,
+    val capturedAtEpochMs: Long? = null
 ) {
     companion object {
         const val MOTOR_DETENIDO = "DETENIDO"
@@ -40,7 +43,7 @@ data class VehicleTelemetry(
      * o si el microcontrolador ESP32 reporta `frenoActivo == true`.
      */
     val isEmergencyBrakeActive: Boolean
-        get() = distancia <= CRITICAL_DISTANCE_CM || frenoActivo
+        get() = !distanceValid || distancia <= CRITICAL_DISTANCE_CM || frenoActivo
 
     /**
      * Nivel normalizado [0.0f .. 1.0f] para la barra de proximidad (rango de referencia 0 a 150 cm).
@@ -112,20 +115,28 @@ data class PairedBluetoothDevice(
  * `{"distancia": 45, "estadoMotor": "DETENIDO", "frenoActivo": false}`
  */
 object VehicleTelemetryParser {
-    private val gson = Gson()
+    private val readingIdFormat = Regex("[0-9a-f]{16}-[0-9a-f]{16}")
 
-    fun parseJson(rawText: String, transportTag: String, seq: Long): Result<VehicleTelemetry> {
+    fun parseJson(rawText: String, transportTag: String, seq: Long,
+                  receivedAt: Long = System.currentTimeMillis()): Result<VehicleTelemetry> {
         val trimmed = rawText.trim()
         if (trimmed.isEmpty()) {
             return Result.failure(IllegalArgumentException("Respuesta de telemetría vacía"))
         }
         return try {
             val jsonObj = JsonParser.parseString(trimmed).asJsonObject
-            val distancia = when {
-                jsonObj.has("distancia") -> jsonObj.get("distancia").asFloat.toInt()
-                jsonObj.has("sensor_distancia_cm") -> jsonObj.get("sensor_distancia_cm").asFloat.toInt()
-                else -> 100
-            }.coerceIn(0, 500)
+            val measurement = when {
+                jsonObj.has("distancia") -> jsonObj.get("distancia").asFloat
+                jsonObj.has("sensor_distancia_cm") -> jsonObj.get("sensor_distancia_cm").asFloat
+                else -> error("Falta la distancia")
+            }
+            require(measurement.isFinite() && measurement in 0f..500f) { "Distancia fuera de rango" }
+            val distancia = measurement.toInt()
+            val distanceValid = jsonObj.get("distanciaValida")?.asBoolean ?: true
+            val archived = jsonObj.get("historial")?.asBoolean ?: false
+            val readingId = jsonObj.get("idLectura")?.asString
+            if (readingId != null) require(readingIdFormat.matches(readingId)) { "Identificador inválido" }
+            val captureAge = jsonObj.get("edadMs")?.asLong
 
             val rawEstado = when {
                 jsonObj.has("estadoMotor") -> jsonObj.get("estadoMotor").asString
@@ -150,7 +161,8 @@ object VehicleTelemetryParser {
                 else -> false
             }
 
-            val frenoEfectivo = frenoReportado || (distancia <= VehicleTelemetry.CRITICAL_DISTANCE_CM)
+            val frenoEfectivo = !distanceValid || frenoReportado ||
+                (distancia <= VehicleTelemetry.CRITICAL_DISTANCE_CM)
             // Si el freno crítico se activa mientras avanzaba, el puente H L298N detiene el avance
             val estadoEfectivo = if (frenoEfectivo && normalizedMotor == VehicleTelemetry.MOTOR_AVANZANDO) {
                 VehicleTelemetry.MOTOR_DETENIDO
@@ -163,16 +175,14 @@ object VehicleTelemetryParser {
                     distancia = distancia,
                     estadoMotor = estadoEfectivo,
                     frenoActivo = frenoEfectivo,
-                    timestampEpochMs = System.currentTimeMillis(),
-                    rawJson = gson.toJson(
-                        mapOf(
-                            "distancia" to distancia,
-                            "estadoMotor" to estadoEfectivo,
-                            "frenoActivo" to frenoEfectivo
-                        )
-                    ),
+                    timestampEpochMs = receivedAt,
+                    rawJson = trimmed,
                     sourceTransport = transportTag,
-                    sequenceNumber = seq
+                    sequenceNumber = seq,
+                    distanceValid = distanceValid,
+                    archived = archived,
+                    readingId = readingId,
+                    capturedAtEpochMs = captureAge?.takeIf { it in 0..receivedAt }?.let { receivedAt - it }
                 )
             )
         } catch (e: Exception) {

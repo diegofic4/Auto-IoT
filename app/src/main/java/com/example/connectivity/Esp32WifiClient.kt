@@ -1,6 +1,12 @@
 package com.example.connectivity
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
 import com.example.model.ConnectionState
+import com.example.model.TelemetryStore
 import com.example.model.TransportMode
 import com.example.model.VehicleCommand
 import com.example.model.VehicleTelemetry
@@ -10,7 +16,10 @@ import java.io.BufferedWriter
 import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
@@ -25,12 +34,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Dns
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Cliente Wi-Fi HTTP/Sockets para comunicación con el Vehículo Autónomo / Móvil de Inspección IoT (ESP32).
@@ -48,9 +63,11 @@ import okhttp3.Request
  *   permitir validar toda la pila HTTP/REST directamente desde el emulador Android.
  */
 class Esp32WifiClient(
+    context: Context,
     private val externalScope: CoroutineScope,
     private val onStateChanged: (ConnectionState) -> Unit,
     private val onTelemetryReceived: (VehicleTelemetry) -> Unit,
+    private val onArchiveRestored: (List<VehicleTelemetry>) -> Unit,
     private val onSystemLog: (String) -> Unit
 ) {
 
@@ -61,30 +78,42 @@ class Esp32WifiClient(
         const val SIMULATOR_LOCAL_IP = "127.0.0.1"
         const val SIMULATOR_LOCAL_PORT = 8080
         private const val POLLING_INTERVAL_MS = 650L
+        private const val FIRST_RETRY_MS = 1000L
+        private const val MAX_RETRY_MS = 8000L
+        private const val HEARTBEAT_INTERVAL_MS = 1200L
+        private const val LOCAL_SAMPLE_INTERVAL_MS = 5000L
     }
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(2200, TimeUnit.MILLISECONDS)
-        .readTimeout(2200, TimeUnit.MILLISECONDS)
-        .writeTimeout(2200, TimeUnit.MILLISECONDS)
-        .callTimeout(3000, TimeUnit.MILLISECONDS)
+        .connectTimeout(3500, TimeUnit.MILLISECONDS)
+        .readTimeout(3500, TimeUnit.MILLISECONDS)
+        .writeTimeout(3500, TimeUnit.MILLISECONDS)
+        .callTimeout(4500, TimeUnit.MILLISECONDS)
+        .dns(localAwareDns(null))
+        .proxy(Proxy.NO_PROXY)
         .retryOnConnectionFailure(false)
+        .followRedirects(false)
         .build()
 
-    private var telemetryJob: Job? = null
+    private class Connection(val url: HttpUrl) {
+        val label = "${url.host}:${url.port}"
+        var pollJob: Job? = null
+        var pollCall: Call? = null
+        val commandCalls = mutableSetOf<Call>()
+        var ready = false
+        var commandGeneration = 0L
+        var lastFailure: String? = null
+    }
+
+    private val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
+    private val telemetryStore = TelemetryStore(context)
+    private val connectionLock = Any()
+    private val networkClientLock = Any()
+    private var wifiClient: Pair<Network, OkHttpClient>? = null
+    private var activeConnection: Connection? = null
     private var localEmbeddedEsp32Job: Job? = null
-
-    @Volatile
     private var localEmbeddedServerSocket: ServerSocket? = null
-
-    @Volatile
-    private var currentHost: String = DEFAULT_ESP32_IP
-
-    @Volatile
-    private var currentPort: Int = DEFAULT_ESP32_PORT
-
-    @Volatile
-    private var isConnectedFlag: Boolean = false
+    private var embeddedGeneration = 0L
 
     private val sequenceCounter = AtomicLong(0L)
 
@@ -98,158 +127,332 @@ class Esp32WifiClient(
      */
     fun connectAndPollTelemetry(host: String, port: Int) {
         val cleanHost = host.trim()
-        if (cleanHost.isEmpty()) {
-            onStateChanged(ConnectionState.Error("Ingrese una dirección IP válida para el nodo ESP32."))
-            return
-        }
-
-        telemetryJob?.cancel()
-        currentHost = cleanHost
-        currentPort = port
-
-        telemetryJob = externalScope.launch(Dispatchers.IO) {
-            val baseUrl = buildBaseUrl(cleanHost, port)
-            onStateChanged(ConnectionState.Connecting("$cleanHost:$port"))
-            onSystemLog("Conectando vía Wi-Fi HTTP al nodo ESP32 en $baseUrl/telemetria...")
-
-            var consecutiveFailures = 0
-
-            while (isActive) {
-                try {
-                    val request = Request.Builder()
-                        .url("$baseUrl/telemetria")
-                        .get()
-                        .header("Accept", "application/json")
-                        .header("Connection", "close")
-                        .build()
-
-                    okHttpClient.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) {
-                            throw IOException("HTTP ${response.code} desde $baseUrl/telemetria")
-                        }
-                        val bodyString = response.body?.string().orEmpty()
-                        val seq = sequenceCounter.incrementAndGet()
-
-                        VehicleTelemetryParser.parseJson(bodyString, "Wi-Fi HTTP ($cleanHost)", seq)
-                            .onSuccess { telemetry ->
-                                if (!isConnectedFlag || consecutiveFailures > 0) {
-                                    isConnectedFlag = true
-                                    consecutiveFailures = 0
-                                    onStateChanged(
-                                        ConnectionState.Connected(
-                                            endpointLabel = "$cleanHost:$port",
-                                            transport = TransportMode.WIFI_ESP32
-                                        )
-                                    )
-                                    onSystemLog("Enlace Wi-Fi HTTP establecido con ESP32 ($cleanHost:$port)")
-                                }
-                                onTelemetryReceived(telemetry)
-                            }
-                            .onFailure { parseErr ->
-                                onSystemLog("Trama JSON descartada (#$seq): ${parseErr.message}")
-                            }
-                    }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (ste: SocketTimeoutException) {
-                    consecutiveFailures++
-                    handleNetworkFailure(
-                        cleanHost,
-                        port,
-                        consecutiveFailures,
-                        "Timeout HTTP (${ste.localizedMessage ?: "El ESP32 no respondió a tiempo"})"
-                    )
-                } catch (se: SocketException) {
-                    consecutiveFailures++
-                    handleNetworkFailure(
-                        cleanHost,
-                        port,
-                        consecutiveFailures,
-                        "Socket interrumpido (${se.localizedMessage ?: "Conexión rechazada o pérdida de AP Wi-Fi"})"
-                    )
-                } catch (ioe: IOException) {
-                    consecutiveFailures++
-                    handleNetworkFailure(
-                        cleanHost,
-                        port,
-                        consecutiveFailures,
-                        "Error I/O Wi-Fi (${ioe.localizedMessage ?: "Host inalcanzable"})"
-                    )
-                } catch (e: Exception) {
-                    consecutiveFailures++
-                    handleNetworkFailure(
-                        cleanHost,
-                        port,
-                        consecutiveFailures,
-                        "Excepción de red (${e.localizedMessage ?: e.javaClass.simpleName})"
-                    )
-                }
-
-                // Si acumulamos 2 fallos consecutivos (pérdida de cobertura o apagado del ESP32),
-                // cerramos limpiamente el ciclo y pasamos a estado Desconectado sin crashear.
-                if (consecutiveFailures >= 2) {
-                    isConnectedFlag = false
-                    onSystemLog(
-                        "Desconexión forzada detectada ($cleanHost:$port sin respuesta). Cerrando enlace de forma segura."
-                    )
-                    onStateChanged(ConnectionState.Disconnected)
-                    break
-                }
-
-                delay(POLLING_INTERVAL_MS)
+        val baseUrl = buildBaseUrl(cleanHost, port).toHttpUrlOrNull()
+        synchronized(connectionLock) {
+            cancelConnectionLocked()
+            if (baseUrl == null) {
+                onStateChanged(ConnectionState.Error("Ingrese una dirección y un puerto válidos para el ESP32."))
+                return
             }
+
+            val connection = Connection(baseUrl)
+            activeConnection = connection
+            onStateChanged(ConnectionState.Connecting(connection.label))
+            onSystemLog("Conectando con el ESP32 en ${connection.label}.")
+            connection.pollJob = externalScope.launch(Dispatchers.IO) { pollTelemetry(connection) }
         }
     }
 
-    /**
-     * Envía un comando de teleoperación (`/adelante`, `/atras`, `/parar`) al servidor REST del ESP32
-     * ejecutándose estrictamente en `Dispatchers.IO`.
-     */
-    fun sendVehicleCommand(command: VehicleCommand, currentDistanceCm: Int) {
-        if (command == VehicleCommand.ADELANTE && currentDistanceCm <= VehicleTelemetry.CRITICAL_DISTANCE_CM) {
-            onSystemLog(
-                "BLOQUEO DE SEGURIDAD OT: Comando /adelante rechazado porque distancia ($currentDistanceCm cm) <= 15 cm (Freno Activo)."
-            )
-            return
-        }
+    private suspend fun pollTelemetry(connection: Connection) {
+        var retryMs = FIRST_RETRY_MS
+        var legacy = false
 
-        externalScope.launch(Dispatchers.IO) {
-            val baseUrl = buildBaseUrl(currentHost, currentPort)
-            val endpointUrl = "$baseUrl${command.endpointPath}"
+        while (currentCoroutineContext().isActive) {
+            var call: Call? = null
+            var waitMs = POLLING_INTERVAL_MS
             try {
-                val request = Request.Builder()
-                    .url(endpointUrl)
-                    .get()
-                    .header("Accept", "application/json, text/plain, */*")
-                    .header("Connection", "close")
-                    .build()
-
-                okHttpClient.newCall(request).execute().use { response ->
-                    val bodyText = response.body?.string().orEmpty().trim()
-                    if (response.isSuccessful) {
-                        onSystemLog("Comando enviado -> GET ${command.endpointPath} (HTTP ${response.code})")
-                        // Si el endpoint devuelve directamente el JSON actualizado de telemetría, lo procesamos de inmediato
-                        if (bodyText.startsWith("{") && bodyText.endsWith("}")) {
-                            val seq = sequenceCounter.incrementAndGet()
-                            VehicleTelemetryParser.parseJson(
-                                bodyText,
-                                "Wi-Fi CMD (${command.endpointPath})",
-                                seq
-                            ).onSuccess { telemetry ->
-                                onTelemetryReceived(telemetry)
-                            }
-                        }
+                val client = clientForHost(connection.url.host)
+                val nextCall = if (legacy) {
+                    client.newCall(localRequest(connection, "telemetria"))
+                } else {
+                    client.newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).build()
+                        .newCall(localRequest(connection, "eventos"))
+                }
+                synchronized(connectionLock) {
+                    if (activeConnection !== connection) return
+                    connection.pollCall = nextCall
+                }
+                call = nextCall
+                nextCall.execute().use { response ->
+                    if (!legacy && response.code == 404) {
+                        legacy = true
+                        continue
+                    }
+                    if (!response.isSuccessful) throw IOException("El ESP32 devolvió HTTP ${response.code}")
+                    val body = response.body ?: throw IOException("Telemetría vacía")
+                    if (legacy) {
+                        val telemetry = parseReading(connection, body.string()).getOrThrow()
+                        if (!publishReading(connection, telemetry)) return
+                        retryMs = FIRST_RETRY_MS
                     } else {
-                        onSystemLog("Advertencia HTTP ${response.code} en comando ${command.endpointPath}: $bodyText")
+                        val source = body.source()
+                        var pendingAck: String? = null
+                        var lastHeartbeat = 0L
+                        var lastSaved = 0L
+                        var restored = 0
+                        while (currentCoroutineContext().isActive) {
+                            val line = source.readUtf8LineStrict(335)
+                            val telemetry = parseReading(connection, line).getOrThrow()
+                            val id = telemetry.readingId ?: throw IOException("La lectura no tiene identificador")
+                            if (telemetry.archived) {
+                                if (telemetryStore.save(connection.label, telemetry)) restored++
+                                pendingAck = id
+                                continue
+                            }
+
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (pendingAck != null || lastHeartbeat == 0L || now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+                                sendHeartbeat(connection, client, pendingAck)
+                                pendingAck = null
+                                lastHeartbeat = now
+                                if (restored > 0) {
+                                    onArchiveRestored(telemetryStore.recent(35, archivedOnly = true))
+                                    onSystemLog("$restored lecturas recuperadas del ESP32 y guardadas en el historial.")
+                                    restored = 0
+                                }
+                            }
+                            if (lastSaved == 0L || now - lastSaved >= LOCAL_SAMPLE_INTERVAL_MS) {
+                                telemetryStore.save(connection.label, telemetry)
+                                lastSaved = now
+                            }
+                            if (!publishReading(connection, telemetry)) return
+                            retryMs = FIRST_RETRY_MS
+                        }
                     }
                 }
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (e: Exception) {
-                isConnectedFlag = false
-                onSystemLog("Fallo al enviar ${command.endpointPath}: ${e.localizedMessage ?: "ESP32 desconectado"}")
-                onStateChanged(ConnectionState.Disconnected)
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                val detail = networkErrorDetail(error)
+                synchronized(connectionLock) {
+                    if (activeConnection !== connection) return
+                    invalidateCommandsLocked(connection)
+                    if (connection.lastFailure != detail) {
+                        onSystemLog("Error de enlace con el ESP32 (${connection.label}). $detail")
+                        onStateChanged(
+                            ConnectionState.Error("ESP32 ${connection.label}. $detail Reintentando automáticamente.")
+                        )
+                        connection.lastFailure = detail
+                    }
+                }
+                waitMs = retryMs
+                retryMs = (retryMs * 2).coerceAtMost(MAX_RETRY_MS)
+            } finally {
+                synchronized(connectionLock) {
+                    if (connection.pollCall === call) connection.pollCall = null
+                }
             }
+            delay(waitMs)
+        }
+    }
+
+    private fun parseReading(connection: Connection, json: String): Result<VehicleTelemetry> =
+        VehicleTelemetryParser.parseJson(
+            json, "Wi-Fi HTTP (${connection.url.host})", sequenceCounter.incrementAndGet()
+        )
+
+    private fun publishReading(connection: Connection, telemetry: VehicleTelemetry): Boolean =
+        synchronized(connectionLock) {
+            if (activeConnection !== connection) return false
+            if (!connection.ready) {
+                onStateChanged(ConnectionState.Connected(connection.label, TransportMode.WIFI_ESP32))
+                onSystemLog("Enlace HTTP establecido con el ESP32 (${connection.label}).")
+            }
+            connection.ready = true
+            connection.lastFailure = null
+            onTelemetryReceived(telemetry)
+            true
+        }
+
+    private fun sendHeartbeat(connection: Connection, client: OkHttpClient, ack: String?) {
+        val url = connection.url.newBuilder().addPathSegment("latido").apply {
+            if (ack != null) addQueryParameter("ack", ack)
+        }.build()
+        val request = Request.Builder().url(url).post(ByteArray(0).toRequestBody()).build()
+        val call = client.newCall(request)
+        synchronized(connectionLock) {
+            if (activeConnection !== connection) return
+            connection.commandCalls.add(call)
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Confirmación del ESP32: HTTP ${response.code}")
+            }
+        } finally {
+            synchronized(connectionLock) { connection.commandCalls.remove(call) }
+        }
+    }
+
+    fun recentStoredReadings(limit: Int, archivedOnly: Boolean = false): List<VehicleTelemetry> =
+        telemetryStore.recent(limit, archivedOnly)
+
+    /**
+     * Envía la orden solo en la conexión en que se solicitó. La reconexión
+     * recupera la telemetría y requiere una nueva orden para mover el vehículo.
+     */
+    fun sendVehicleCommand(command: VehicleCommand, currentDistanceCm: Int) {
+        if (command == VehicleCommand.ADELANTE && currentDistanceCm <= VehicleTelemetry.CRITICAL_DISTANCE_CM) {
+            onSystemLog("Orden ADELANTE bloqueada a $currentDistanceCm cm.")
+            return
+        }
+
+        val (connection, generation) = synchronized(connectionLock) {
+            val current = activeConnection
+            if (current == null || (!current.ready && command != VehicleCommand.PARAR)) {
+                onSystemLog("Orden ${command.displayLabel} omitida mientras se recupera la telemetría.")
+                return
+            }
+            current to current.commandGeneration
+        }
+
+        externalScope.launch(Dispatchers.IO) {
+            val path = command.endpointPath.removePrefix("/")
+            val call = clientForHost(connection.url.host).newCall(localRequest(connection, path))
+            synchronized(connectionLock) {
+                if (activeConnection !== connection || connection.commandGeneration != generation) return@launch
+                connection.commandCalls.add(call)
+            }
+            try {
+                call.execute().use { response ->
+                    val raw = response.body?.string().orEmpty().trim()
+                    currentCoroutineContext().ensureActive()
+                    synchronized(connectionLock) {
+                        if (activeConnection !== connection || connection.commandGeneration != generation) {
+                            return@launch
+                        }
+                        if (response.isSuccessful) {
+                            onSystemLog("ACK ${command.displayLabel} (HTTP ${response.code}).")
+                        } else {
+                            onSystemLog("ERR ${command.displayLabel} (HTTP ${response.code}). $raw")
+                        }
+                        if ((response.isSuccessful || response.code == 409 || response.code == 422) &&
+                            raw.startsWith("{") && raw.endsWith("}")
+                        ) {
+                            VehicleTelemetryParser.parseJson(
+                                raw,
+                                "Wi-Fi CMD (${command.endpointPath})",
+                                sequenceCounter.incrementAndGet()
+                            ).onSuccess(onTelemetryReceived)
+                        }
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (error: Exception) {
+                synchronized(connectionLock) {
+                    if (activeConnection === connection && connection.commandGeneration == generation) {
+                        onSystemLog("No se confirmó ${command.displayLabel}. ${networkErrorDetail(error)}")
+                    }
+                }
+            } finally {
+                synchronized(connectionLock) { connection.commandCalls.remove(call) }
+            }
+        }
+    }
+
+    private fun localRequest(connection: Connection, path: String): Request =
+        Request.Builder()
+            .url(connection.url.newBuilder().addPathSegment(path).build())
+            .get()
+            .header("Accept", "application/json")
+            .header("Connection", "close")
+            .build()
+
+    private fun networkErrorDetail(error: Exception): String = when (error) {
+        is SocketTimeoutException -> "La conexión HTTP no respondió a tiempo."
+        else -> error.localizedMessage?.trimEnd('.')?.let { "$it." } ?: "No se pudo completar la conexión HTTP."
+    }
+
+    private fun invalidateCommandsLocked(connection: Connection) {
+        connection.ready = false
+        connection.commandGeneration++
+        connection.commandCalls.forEach(Call::cancel)
+        connection.commandCalls.clear()
+    }
+
+    private fun cancelConnectionLocked() {
+        activeConnection?.let { previous ->
+            previous.pollJob?.cancel()
+            previous.pollCall?.cancel()
+            invalidateCommandsLocked(previous)
+        }
+        activeConnection = null
+    }
+
+    private fun clientForHost(host: String): OkHttpClient {
+        val network = wifiNetworkForHost(host) ?: return okHttpClient
+        return synchronized(networkClientLock) {
+            wifiClient?.takeIf { it.first == network }?.second
+                ?: okHttpClient.newBuilder()
+                    .socketFactory(network.socketFactory)
+                    .dns(localAwareDns(network))
+                    .proxy(Proxy.NO_PROXY)
+                    .build()
+                    .also { wifiClient = network to it }
+        }
+    }
+
+    private fun localAwareDns(network: Network?): Dns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val ipv4 = parseIpv4Bytes(hostname)
+            return if (ipv4 != null) {
+                listOf(InetAddress.getByAddress(hostname, ipv4))
+            } else if (network != null) {
+                network.getAllByName(hostname).toList()
+            } else {
+                Dns.SYSTEM.lookup(hostname)
+            }
+        }
+    }
+
+    private fun parseIpv4Bytes(host: String): ByteArray? {
+        val fields = host.split('.')
+        if (fields.size != 4) return null
+        val bytes = ByteArray(4)
+        for ((index, value) in fields.withIndex()) {
+            val octet = value.toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+            bytes[index] = octet.toByte()
+        }
+        return bytes
+    }
+
+    private fun ipv4ToInt(bytes: ByteArray): Int =
+        ((bytes[0].toInt() and 0xFF) shl 24) or
+            ((bytes[1].toInt() and 0xFF) shl 16) or
+            ((bytes[2].toInt() and 0xFF) shl 8) or
+            (bytes[3].toInt() and 0xFF)
+
+    private fun isInSameIpv4Subnet(hostBytes: ByteArray, linkProperties: LinkProperties): Boolean {
+        val targetInt = ipv4ToInt(hostBytes)
+        return linkProperties.linkAddresses.any { linkAddr ->
+            val addr = linkAddr.address
+            if (addr is Inet4Address) {
+                val prefix = linkAddr.prefixLength.coerceIn(0, 32)
+                val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
+                (ipv4ToInt(addr.address) and mask) == (targetInt and mask)
+            } else {
+                false
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wifiNetworkForHost(host: String): Network? {
+        // El gateway del emulador y la interfaz local conservan el enrutamiento normal.
+        if (host == "10.0.2.2" || host == SIMULATOR_LOCAL_IP) return null
+        val bytes = parseIpv4Bytes(host) ?: return null
+        val address = InetAddress.getByAddress(bytes)
+        val manager = connectivityManager ?: return null
+        return try {
+            val wifiNetworks = manager.allNetworks.filter { network ->
+                manager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
+            // 1. Preferir la red Wi-Fi cuya subred IPv4 o tabla de rutas incluya la IP del ESP32
+            //    (sin depender de route.gateway?.isAnyLocalAddress, que falla en Samsung/Xiaomi/Motorola).
+            wifiNetworks.firstOrNull { network ->
+                val props = manager.getLinkProperties(network) ?: return@firstOrNull false
+                isInSameIpv4Subnet(bytes, props) ||
+                    props.routes.any { route -> !route.isDefaultRoute && route.matches(address) }
+            } ?: if (address.isSiteLocalAddress) {
+                // 2. Respaldo para IPs privadas LAN (192.168.x.x / 10.x.x.x / 172.16-31.x.x):
+                //    forzar salida por Wi-Fi aunque los datos móviles estén encendidos.
+                wifiNetworks.firstOrNull()
+            } else {
+                null
+            }
+        } catch (_: SecurityException) {
+            null
         }
     }
 
@@ -282,42 +485,55 @@ class Esp32WifiClient(
      * como desde **otro celular** conectado a la misma red Wi-Fi o Zona Portátil / Hotspot).
      */
     fun startEmbeddedEsp32SimulatorAndConnect() {
-        stopEmbeddedEsp32Simulator()
-        simDistanceCm.set(55)
-        simMotorState.set(VehicleTelemetry.MOTOR_DETENIDO)
+        synchronized(connectionLock) {
+            stopEmbeddedSimulatorLocked()
+            simDistanceCm.set(55)
+            simMotorState.set(VehicleTelemetry.MOTOR_DETENIDO)
+            val generation = embeddedGeneration
+            val previousConnection = activeConnection
 
-        localEmbeddedEsp32Job = externalScope.launch(Dispatchers.IO) {
-            var server: ServerSocket? = null
-            try {
-                server = ServerSocket().apply {
-                    reuseAddress = true
-                    // Escuchar en 0.0.0.0:8080 permite conexiones tanto del propio teléfono como de OTRO CELULAR en la red
-                    bind(InetSocketAddress("0.0.0.0", SIMULATOR_LOCAL_PORT))
-                }
-                localEmbeddedServerSocket = server
-                val localIps = getDeviceLocalIpAddresses()
-                val ipSummary = if (localIps.isNotEmpty()) localIps.joinToString(", ") else SIMULATOR_LOCAL_IP
-                onSystemLog(
-                    "Modo Emisor / Servidor activo en puerto $SIMULATOR_LOCAL_PORT (IPs para otro celular: $ipSummary)"
-                )
-
-                // Iniciamos el cliente HTTP local para visualizar también en pantalla la telemetría en vivo
-                connectAndPollTelemetry(SIMULATOR_LOCAL_IP, SIMULATOR_LOCAL_PORT)
-
-                while (isActive && !server.isClosed) {
-                    val client = try {
-                        server.accept()
-                    } catch (se: SocketException) {
-                        break
+            localEmbeddedEsp32Job = externalScope.launch(Dispatchers.IO) {
+                var server: ServerSocket? = null
+                try {
+                    val boundServer = ServerSocket()
+                    server = boundServer
+                    boundServer.apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress("0.0.0.0", SIMULATOR_LOCAL_PORT))
                     }
-                    handleEmbeddedHttpClient(client)
+                    val localIps = getDeviceLocalIpAddresses()
+                    val ipSummary = if (localIps.isNotEmpty()) localIps.joinToString(", ") else SIMULATOR_LOCAL_IP
+                    synchronized(connectionLock) {
+                        if (generation != embeddedGeneration) return@launch
+                        localEmbeddedServerSocket = boundServer
+                        onSystemLog("Servidor local activo en $SIMULATOR_LOCAL_PORT (IPs: $ipSummary).")
+                        if (activeConnection === previousConnection) {
+                            connectAndPollTelemetry(SIMULATOR_LOCAL_IP, SIMULATOR_LOCAL_PORT)
+                        }
+                    }
+
+                    while (isActive && !boundServer.isClosed) {
+                        val client = try {
+                            boundServer.accept()
+                        } catch (_: SocketException) {
+                            break
+                        }
+                        handleEmbeddedHttpClient(client)
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (error: Exception) {
+                    synchronized(connectionLock) {
+                        if (generation == embeddedGeneration) {
+                            onSystemLog("Servidor local finalizado: ${error.localizedMessage}")
+                        }
+                    }
+                } finally {
+                    safeCloseServerSocket(server)
+                    synchronized(connectionLock) {
+                        if (localEmbeddedServerSocket === server) localEmbeddedServerSocket = null
+                    }
                 }
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (e: Exception) {
-                onSystemLog("Servidor local finalizado: ${e.localizedMessage}")
-            } finally {
-                safeCloseServerSocket(server)
             }
         }
     }
@@ -440,38 +656,24 @@ class Esp32WifiClient(
         }
     }
 
-    fun isEmbeddedSimulatorRunning(): Boolean {
-        return localEmbeddedEsp32Job?.isActive == true && localEmbeddedServerSocket?.isClosed == false
+    fun isEmbeddedSimulatorRunning(): Boolean = synchronized(connectionLock) {
+        localEmbeddedEsp32Job?.isActive == true && localEmbeddedServerSocket?.isClosed == false
     }
 
-    fun stopEmbeddedEsp32Simulator() {
+    private fun stopEmbeddedSimulatorLocked() {
+        embeddedGeneration++
         localEmbeddedEsp32Job?.cancel()
         localEmbeddedEsp32Job = null
         safeCloseServerSocket(localEmbeddedServerSocket)
         localEmbeddedServerSocket = null
     }
 
-    /**
-     * Cierra de forma limpia y segura las conexiones activas y envía orden preventiva de parada si estaba enlazado.
-     */
     fun disconnect() {
-        telemetryJob?.cancel()
-        telemetryJob = null
-        stopEmbeddedEsp32Simulator()
-        isConnectedFlag = false
-        onSystemLog("Enlace Wi-Fi ESP32 desconectado de forma segura.")
-        onStateChanged(ConnectionState.Disconnected)
-    }
-
-    private suspend fun handleNetworkFailure(
-        host: String,
-        port: Int,
-        failureCount: Int,
-        detail: String
-    ) = withContext(Dispatchers.IO) {
-        onSystemLog("Alerta de enlace Wi-Fi ($host:$port) [Intento $failureCount/2]: $detail")
-        if (failureCount == 1) {
-            onStateChanged(ConnectionState.Error("Inestabilidad con ESP32 ($host:$port): $detail"))
+        synchronized(connectionLock) {
+            cancelConnectionLocked()
+            stopEmbeddedSimulatorLocked()
+            onSystemLog("Enlace Wi-Fi del ESP32 cerrado.")
+            onStateChanged(ConnectionState.Disconnected)
         }
     }
 

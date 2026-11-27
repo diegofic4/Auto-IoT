@@ -1,166 +1,162 @@
-# Estación de Monitoreo y Teleoperación OT — Vehículo de Inspección IoT (ESP32 y Celular ↔ Celular)
+# Auto-IoT · Evaluación ES3 TI3042
 
-Aplicación móvil nativa Android desarrollada en **Kotlin** con **Jetpack Compose (Material 3)** y arquitectura **MVVM limpia**, diseñada como **Estación Comercial de Monitoreo y Teleoperación** de un Vehículo Autónomo / Móvil de Inspección IoT basado en **ESP32** (sensor ultrasónico **HC-SR04**, puente H **L298N** y **LED de advertencia**) o en modo **Celular a Celular (2 Teléfonos)**, cumpliendo con los estándares de ciberseguridad **ISO/IEC 27400**, tipografía de alta legibilidad y tolerancia a fallos.
+## 1. Datos del proyecto
 
----
+| Dato | Descripción |
+| --- | --- |
+| Integrantes | Diego Astudillo · Anibal San Martin · Benjamin Inostroz |
+| Sección | Por confirmar |
+| Problema | El operador necesita ver la distancia a un obstáculo y evitar que el prototipo siga avanzando cuando se acerca demasiado. |
+| Sistema | La ESP32 mide distancia, controla un motor DC y corta el avance a 15 cm o menos o si se pierde el eco. Auto IoT envía órdenes y muestra distancia, estado, freno e historial. |
+| Placa | Keyestudio ESP32 Plus con ESP32-WROOM-32. |
+| Sensor | HC-SR04. |
+| Actuadores | Motor DC de dos terminales en el canal A de un L298N. El firmware incluye una salida de luz opcional. |
+| Enlace | Wi-Fi local WPA2 en punto de acceso de la ESP32. |
+| Responsabilidades | Distribución individual por confirmar con el equipo. |
 
-## 1. Pantallazos Descriptivos de la Aplicación (Presentación Comercial)
+## 2. Esquema de conexiones
 
-Los siguientes pantallazos descriptivos están incluidos en la carpeta [`docs/screenshots/`](docs/screenshots/) del repositorio y destacan las ventajas clave del producto:
+[Esquema del prototipo](docs/esquema-esp32-es3.png)
 
-| 1. Acceso Cifrado, Multicuenta y Botón `[Tema ▼]` | 2. Conectar Celular ↔ Celular, ESP32 y Consentimiento |
-| :---: | :---: |
-| ![Acceso Cifrado y Botón de Tema](docs/screenshots/01_login_crear_cuenta.png) | ![Conectar Celular a Celular y Consentimiento ISO 27400](docs/screenshots/02_consentimiento_permisos.png) |
-| **Seguridad ISO 27400 y Personalización:** Pestañas para **Iniciar Sesión** y **Crear Cuenta** con hashing `SHA-256 + Salt` en `EncryptedSharedPreferences`, e ícono/botón superior compacto **`[Tema ▼]`** que despliega 6 paletas de alto contraste. | **Pestaña 2 (`Conectar Dispositivos`):** Permite enlazar **un celular con otro celular** (por Wi-Fi, Hotspot o Bluetooth RFCOMM) o conectarse al vehículo **ESP32**, mostrando primero el diálogo de **Consentimiento Informado ISO 27400**. |
+| Desde | Hacia | Detalle |
+| --- | --- | --- |
+| ESP32 `IO5` | HC-SR04 `TRIG` | Señal directa. |
+| HC-SR04 `ECHO` | ESP32 `IO18` | 1 kΩ en serie hasta el nodo de `IO18` y 2 kΩ desde ese nodo a GND. Convierte un pulso de 5 V en aproximadamente 3,3 V. |
+| ESP32 `5V` y `GND` | HC-SR04 `VCC` y `GND` | La ESP32 se alimenta por USB durante la demostración. |
+| ESP32 `IO25`, `IO26`, `IO27` | L298N `IN1`, `IN2`, `ENA` | Retirar el jumper `ENA` y poner 10 kΩ entre `ENA` y GND. |
+| L298N `OUT1` y `OUT2` | Dos terminales del motor DC | Si el sentido queda invertido, intercambiar estos cables con la alimentación desconectada. |
+| Portapilas +, cuatro AA de 1,5 V en serie | L298N `VS`/`+12V` | 6 V nominales para la tracción. Comprobar el voltaje admisible del motor. |
+| Portapilas −, GND de ESP32 y sensor | L298N `GND` | Masa común. |
+| ESP32 `5V` | L298N `+5V` | Alimentación de lógica desde el USB. Retirar primero el jumper del regulador `5V-EN`. |
+| ESP32 `IO4` | LED opcional | Usar resistencia en serie y conectar a GND. |
 
-| 3. Pestaña `Control y Sensor` (Cruceta 5 Direcciones) | 4. Protección Anticolisión `⚠️ FRENO ACTIVO` (`<= 15 cm`) |
-| :---: | :---: |
-| ![Pestaña Control y Sensor en Vivo](docs/screenshots/03_dashboard_teleoperacion.png) | ![Freno de Emergencia Activo](docs/screenshots/04_freno_emergencia_activo.png) |
-| **Pestaña 1 (`Control y Sensor`):** Interfaz despejada con lectura en vivo del sensor **HC-SR04** (`45 cm`) y **Cruceta / D-Pad de 5 Direcciones** (**`▲ ADELANTE`**, **`◄ IZQUIERDA`**, **`■ PARAR`**, **`DERECHA ►`**, **`▼ ATRÁS`**), adaptable a pantalla vertical y horizontal. | **Seguridad Física Automática:** Cuando `distancia <= 15 cm`, se despliega **`⚠️ FRENO ACTIVO`**, se bloquea **`ADELANTE`** para evitar choque frontal y se mantienen habilitados **`◄ IZQUIERDA`**, **`DERECHA ►`**, **`■ PARAR`** y **`▼ ATRÁS`** para esquivar o retroceder. |
+El cableado de alimentación de la tabla usa la lógica del L298N alimentada por USB. Con cuatro AA, el regulador integrado del módulo puede quedar por debajo de su tensión de trabajo. [Ficha del regulador 78M05](https://www.st.com/resource/en/datasheet/cd00000447.pdf)
 
----
+## 3. Protocolo de comunicación
 
-## 2. Organización Limpia en 3 Pestañas, Rotación de Pantalla y Alta Legibilidad
+La ESP32 sirve HTTP local en `192.168.4.1:80`. Las órdenes de tracción son rutas sin cuerpo ni parámetros. Las respuestas son JSON y el flujo de lecturas usa JSON UTF-8 con un objeto por línea terminada en LF (NDJSON). La app lee líneas de hasta 335 bytes en `/eventos`. Una línea incompleta o inválida se descarta y provoca reconexión. Las tramas incompletas en el canal de órdenes se rechazan antes de accionar.
 
-Para ofrecer una experiencia comercial intuitiva, ordenada y sin saturar una sola pantalla, la aplicación está estructurada en **3 secciones independientes** accesibles desde la barra inferior (`NavigationBar`) y soporta **rotación completa del teléfono (Vertical ↔ Horizontal)** sin perder estado, conexión ni botones:
+| Dirección | Método y ruta | Valores | Respuesta |
+| --- | --- | --- | --- |
+| App → ESP32 | `GET /adelante`, `/atras`, `/parar` | Sin parámetros | `200 ACK` y estado del motor. Avance inseguro → `409 ERR FRENO_ACTIVO`. |
+| App → ESP32 | `GET /izquierda`, `/derecha` | Sin parámetros | `422 ERR COMANDO_NO_DISPONIBLE` en el perfil de un motor. |
+| App → ESP32 | `GET /flash` | Sin parámetros | Alterna la luz opcional. |
+| App → ESP32 | `POST /luz?valor=0` o `valor=1` | Un valor entero literal, sin cuerpo | `200 ACK`, `400 ERR TRAMA_INVALIDA` o `422 ERR VALOR_FUERA_DE_RANGO`. |
+| Navegador → ESP32 | `GET /telemetria` | Sin parámetros | Lectura instantánea con distancia en cm, validez, motor, freno y motivo. |
+| ESP32 → app | `GET /eventos` | Una suscripción HTTP, un cliente a la vez | Cola recuperada y después una lectura cada 650 ms, sin una petición por dato. |
+| App → ESP32 | `POST /latido` con `ack` opcional | Sin cuerpo. `ack` admite 16 dígitos hexadecimales, un guion y otros 16. | Confirma el enlace y, cuando hay ID, libera las lecturas ya guardadas en SQLite. |
+| Cliente → ESP32 | Ruta inexistente | Por ejemplo, `GET /inexistente` | `404 ERR COMANDO_DESCONOCIDO`. |
 
-1. **Pestaña 1 — `Control y Sensor` (Cruceta de 5 Direcciones y Telemetría)**:
-   - Dedicada exclusivamente a la conducción: tarjeta de distancia ultrasónica **HC-SR04** con números gigantes (`54 sp`), barra de proximidad con código de colores, alerta de emergencia (`<= 15 cm`) y **Cruceta / D-Pad de 5 Direcciones** (**`▲ ADELANTE`**, **`◄ IZQUIERDA`**, **`■ PARAR`**, **`DERECHA ►`**, **`▼ ATRÁS`**).
-   - **Diseño Adaptativo al Rotar el Teléfono (Vertical y Horizontal)**: En orientación horizontal (`maxWidth >= 620.dp`), la tarjeta ubica el **Sensor HC-SR04 a la izquierda** y la **Cruceta D-Pad de 5 botones a la derecha** en 2 columnas paralelas con desplazamiento fluido, conservando todos los botones, diálogos y funciones accesibles.
-2. **Pestaña 2 — `Conectar Dispositivos` (Celular ↔ Celular, ESP32 y PC)**:
-   - Guía paso a paso para conectar **dos celulares entre sí** (Wi-Fi / Hotspot o Bluetooth), conectarse al **ESP32 real (`192.168.4.1`)** o probar en 1 toque con el simulador integrado, además del panel de **Consentimiento Informado ISO/IEC 27400**.
-3. **Pestaña 3 — `Historial y Cuenta` (Perfil, Temas y Auditoría JSON)**:
-   - Gestión de la cuenta activa, botón desplegable de paleta de colores, cambio de contraseña cifrada, cierre de sesión seguro y consola de tramas JSON recibidas de `/telemetria`.
+`/eventos` incluye `idLectura`, `capturaMs` desde el arranque, `edadMs`, `historial`, `distancia`, `distanciaValida`, `estadoMotor`, `frenoActivo` y `motivoFreno`. La distancia física válida del HC-SR04 va de 2 a 400 cm. Ante falta de eco, el firmware indica `distanciaValida:false` y la app muestra **Sin eco**. La app fecha las lecturas recibidas y las respuestas ACK/ERR. Para archivos del arranque actual también estima la hora de captura. Para arranques anteriores el reloj del ESP32 no permite conocer la hora real de captura y se muestra la hora de recepción.
 
-### Botón / Ícono Desplegable de Paleta de Colores (`[Tema ▼]`)
-En lugar de ocupar espacio en la pantalla con listas largas de colores, la cabecera superior incluye el botón compacto **`[Tema: <Nombre> ▼]`** con ícono de paleta y doble punto cromático. Al pulsarlo, se despliega una ventana modal (`PalettePickerDialog`) con **10 temas organizados en 2 categorías** (persistidos en `EncryptedSharedPreferences`):
+## 4. Seguridad
 
-1. **🌿 Simples y Descanso Visual (Suaves para la vista, cero fatiga ocular)**:
-   - **Pizarra Suave** (Oscuro Mate — Estilo *Nord/Slate* en gris azulado mate sin brillo neón).
-   - **Papel Cálido** (Claro Crema/Sepia — Fondo cálido tipo lectura para evitar deslumbramiento).
-   - **Salvia Natural** (Oscuro Relajante — Tonos verde bosque mate y salvia suave).
-   - **Brisa Marina** (Claro Minimalista — Blanco azulado limpio y azul corporativo).
-   - **Luz de Día** (Claro Nítido — Para uso bajo luz solar directa).
-2. **⚡ Alto Contraste Táctico / SCADA**:
-   - **Cyber Cyan**, **Ámbar Táctico**, **Verde Matrix**, **Neón Violeta** y **Rojo Táctico**.
+| Control | Aplicación | Evidencia y prueba |
+| --- | --- | --- |
+| Acceso Wi-Fi por WPA2-PSK con CCMP y clave propia | [network.c](firmware/esp32/src/network.c) exige entre 8 y 63 caracteres ASCII imprimibles y desactiva el punto de acceso si falta una clave válida. | En el banco se observó que un firmware sin clave desactiva el Wi-Fi. La prueba con una clave incorrecta se hace desde Ajustes de Android, antes de unir el teléfono con la clave del equipo. |
+| Validación previa a la actuación y parada ante pérdida de enlace | [network.c](firmware/esp32/src/network.c), [es3.c](firmware/esp32/src/es3.c) y [vehicle.c](firmware/esp32/src/vehicle.c). El firmware rechaza rutas y parámetros inválidos. El avance exige un eco válido y distancia segura. | El banco C verifica rechazo de parámetros, corte del avance al acercar un obstáculo y pérdida de enlace. El guion de demostración incluye la ruta desconocida y el valor fuera de rango en la placa. |
+| Cuentas locales sin usuario de demostración preconfigurado | [AuthRepository.kt](app/src/main/java/com/example/security/AuthRepository.kt) retira la cuenta demo de instalaciones anteriores. Verificadores SHA-256 con sal aleatoria individual y preferencias cifradas con Android Keystore donde está disponible. | Al abrir el APK en una instalación nueva, crear una cuenta y probar una contraseña errónea. No se muestran verificadores ni sales en la pantalla de auditoría. |
 
----
+La contraseña Wi-Fi va en `firmware/esp32/wifi_secrets.h`, excluido de Git. Se entrega [una plantilla vacía](firmware/esp32/wifi_secrets.example.h). El APK no necesita esa contraseña porque Android gestiona la conexión Wi-Fi. No se distribuye una imagen de firmware grabada con la contraseña del equipo.
 
-## 3. Conexión de Celular a Celular (2 Teléfonos por Wi-Fi, Hotspot o Bluetooth)
+Estas medidas se alinean con control de acceso, reducción de superficie y protección de credenciales de la familia ISO/IEC 27000. El enlace de aplicación es HTTP dentro del punto de acceso. Un participante que ya tenga acceso a esa red podría consultar las lecturas y accionar las rutas. La cuenta de Android controla la interfaz local y el firmware confía en la red Wi-Fi.
 
-La aplicación permite conectar **un celular directamente con otro celular** sin necesidad de un ESP32 físico ni un computador externo. Un teléfono actúa como **Vehículo / Sensor Emisor (Celular A)** y el otro como **Mando de Control Remoto (Celular B)**:
+## 5. Datos personales
 
-### Opción A: Celular a Celular por Wi-Fi o Zona Wi-Fi (Hotspot)
-1. Conecte ambos celulares a la misma red Wi-Fi, o active **Compartir Internet (Zona Wi-Fi / Hotspot)** en uno de los celulares y conecte el otro a esa red.
-2. En el **Celular A (Vehículo / Emisor)**:
-   - Abra la pestaña **`2. Conectar Dispositivos`** y seleccione el modo **Wi-Fi**.
-   - La app detecta y muestra automáticamente la **IP de este celular** en pantalla (por ejemplo `192.168.1.45` o `192.168.43.1`).
-   - Pulse el botón verde **"Convertir este Celular en Servidor (Puerto 8080)"**. El servidor HTTP se abrirá en todas las interfaces de red (`0.0.0.0:8080`).
-3. En el **Celular B (Mando de Control)**:
-   - En la pestaña **`2. Conectar Dispositivos`**, escriba la IP mostrada en el Celular A con el puerto `8080` (o toque el chip rápido **`Hotspot Celular (192.168.43.1:8080)`**) y pulse **"Conectar Ahora"**.
-   - Al presionar **`ADELANTE`**, **`IZQUIERDA`**, **`PARAR`**, **`DERECHA`** o **`ATRÁS`** en el Celular B, el Celular A actualizará su dirección, motor y distancia en tiempo real.
+| Dato | Viaja al ESP32 | Retención y protección |
+| --- | --- | --- |
+| Nombre, usuario y rol del operador | No | Perfil local en preferencias de la app. Evitar datos personales reales en pruebas de clase. |
+| Contraseña del operador | No | Se guarda un verificador con sal, no la contraseña original. Android Keystore respalda las preferencias cifradas en dispositivos compatibles. |
+| Distancia, hora, estado del motor y freno | Sí | Flash de la ESP32 para lecturas sin enlace y SQLite privado de Android. Los datos no incluyen un identificador de operador y no se suben a la nube. |
+| Imagen, GPS o audio | No | El perfil ES3 no recoge ni almacena estos datos. Android puede solicitar permisos de descubrimiento de Wi-Fi o Bluetooth según la versión. |
 
-### Opción B: Celular a Celular por Bluetooth Clásico (RFCOMM SPP)
-1. Vincule ambos celulares desde los **Ajustes Bluetooth** de Android.
-2. En el **Celular A (Vehículo / Emisor)**:
-   - En la pestaña **`2. Conectar Dispositivos`**, elija **Bluetooth** y pulse **"Poner este Celular en Modo Espera (Servidor Bluetooth)"**.
-   - El Celular A comenzará a emitir telemetría JSON cada `650 ms` y escuchará comandos `ADELANTE`, `IZQUIERDA`, `DERECHA`, `ATRAS` y `PARAR` por el canal RFCOMM (`UUID 00001101-0000-1000-8000-00805F9B34FB`).
-3. En el **Celular B (Mando de Control)**:
-   - Pulse **"Buscar Dispositivos Vinculados"** y toque el nombre del **Celular A** en la lista para iniciar la teleoperación Bluetooth entre ambos teléfonos.
+## 6. Reconexión y plan de contingencia
 
----
+Android reintenta después de 1, 2, 4 y hasta 8 s. Al recibir una lectura válida vuelve a 1 s. Se indica error y reintento en la pantalla de conexión y se conserva la hora de la última lectura. Android debe permitir que el teléfono permanezca en el Wi-Fi local sin Internet. El vehículo vuelve a moverse solo después de una nueva orden explícita.
 
-## 4. Gestión de Cuentas y Seguridad Criptográfica (ISO/IEC 27400)
+| Falla | Acción y recuperación |
+| --- | --- |
+| Teléfono pierde el Wi-Fi o se cierra la app | El firmware pone `ENA` en bajo cuando se va la última estación o al pasar aproximadamente 3 s sin actividad de control. Al volver, Android reabre el flujo y sincroniza la flash. |
+| ESP32 se reinicia o apaga | El puente se deshabilita durante el arranque con la resistencia de 10 kΩ. La tracción queda detenida al iniciar. Se reabre el AP y se recupera la cola de la NVS. |
+| Sensor sin eco o a 15 cm o menos | Se bloquea el avance y se detiene el motor si venía avanzando. Tras una lectura segura, el usuario puede volver a dar la orden. |
+| Pilas o cableado de potencia fallan | Mostrar monitoreo sin mover el motor. Usar `Parar`, retirar el portapilas y verificar tensión, terminales y masa común antes de rearmar. |
+| Incompatibilidad con firmware anterior | Si `/eventos` devuelve 404, la app usa `/telemetria`. Para probar sincronización, cargar el firmware ES3. |
 
-1. **Crear Cuenta Nueva (`registerAccount`)**:
-   - Permite registrar **Nombre Completo**, **Nombre de Usuario**, **Rol Operativo**, **Contraseña** y **Confirmación**, con medidor de fortaleza en tiempo real.
-   - Genera un **Salt aleatorio de 16 bytes (`SecureRandom`)** y guarda únicamente el hash `SHA-256(salt + password)` en `EncryptedSharedPreferences` (`AES256_GCM` respaldado por Android Keystore). **Cero credenciales en texto plano.**
-2. **Iniciar Sesión y Cambio Rápido de Cuenta (`login`)**:
-   - Chips interactivos para elegir cuentas registradas con un toque y acceso rápido con cuenta demo (`operador_ot` / `Iso27400#OT`).
-3. **Cambio de Contraseña y Cierre de Sesión Seguro (`logoutOperator`)**:
-   - Desde el botón **"Mi Cuenta"** o la pestaña **`3. Historial y Cuenta`**, el operador puede actualizar su contraseña o cerrar sesión (lo cual detiene el enlace activo y revoca la bandera cifrada de sesión).
+## 7. Almacenamiento temporal sin conexión
 
----
+Android guarda lecturas del canal nuevo en **SQLite**. Durante la conexión conserva una muestra de cada 5 s y persiste todas las lecturas recuperadas. Cada una tiene una clave única de endpoint e ID de lectura. La app confirma el último ID de una serie recuperada solo después de insertar todas las filas anteriores. Si el ACK se pierde, el ESP32 reenvía la serie y SQLite ignora los IDs ya guardados. La app conserva el historial tras un reinicio y permite mostrar lecturas recuperadas aunque se desconecte. Los comandos de motor caducados quedan fuera de la sincronización para proteger el arranque.
 
-## 5. Arquitectura MVVM y Protocolo de Comunicación
+| Dato | ESP32 |
+| --- | --- |
+| Mecanismo | NVS, clave `lecturas_v1` en el espacio `auto_iot_es3`. |
+| Tamaño | 24 bytes por lectura en el objetivo ESP32. El bloque para 32 lecturas ocupa aproximadamente 0,8 KiB, más metadatos de NVS. |
+| Frecuencia | Una captura cada 15 s cuando no llega un latido de la app. El ciclo de control del sensor sigue a 70 ms. |
+| Capacidad | 32 lecturas, aproximadamente 8 min sin enlace y con la placa encendida. |
+| Cola llena | Conserva las 32 lecturas pendientes hasta confirmarlas. Las nuevas muestras offline se omiten mientras está llena. |
+| Desgaste | Una actualización NVS por muestra offline, ninguna por evento en vivo y una por lote confirmado. NVS administra las escrituras en flash. |
+| Vaciado | En el reencuentro `/eventos` entrega primero la cola. `POST /latido?ack=<id>` retira el prefijo confirmado por la app. |
 
-### 5.1 Estructura Modular por Paquetes
-- `com.example.security`: `CryptoManager.kt` (`EncryptedSharedPreferences` + `MasterKey AES256_GCM` + `SHA-256` en tiempo constante) y `AuthRepository.kt` (multicuenta cifrada y persistencia de paleta).
-- `com.example.model`: `TelemetryModels.kt` (`VehicleTelemetry`, `VehicleCommand` con las 5 direcciones `ADELANTE`, `IZQUIERDA`, `PARAR`, `DERECHA`, `ATRAS`, `ConnectionState` y `VehicleTelemetryParser` tolerante a JSON malformado).
-- `com.example.connectivity`:
-  - `Esp32WifiClient.kt`: Cliente HTTP REST (`OkHttpClient`) en `Dispatchers.IO` hacia `/adelante`, `/izquierda`, `/derecha`, `/atras`, `/parar` y `/telemetria`, más servidor HTTP integrado en `0.0.0.0:8080` con detección de IP LAN/Hotspot (`getDeviceLocalIpAddresses()`) para conexión Celular a Celular.
-  - `BluetoothManager.kt`: Cliente y Servidor Bluetooth RFCOMM (`00001101-0000-1000-8000-00805F9B34FB`) en `Dispatchers.IO` con emisor bidireccional de telemetría JSON para conexión entre 2 celulares o contra ESP32.
-- `com.example.ui`: `TelemetryViewModel.kt`, `VehicleDashboardScreen.kt` (organizado en 3 pestañas y adaptable a rotación vertical/horizontal), `PaletteSelector.kt` (botón e ícono desplegable), `LoginScreen.kt` y `PermissionDialog.kt`.
+## 8. Consumo de energía
 
-### 5.2 Protocolo REST y Bluetooth (`/telemetria`)
-```json
-{"distancia": 45, "estadoMotor": "DETENIDO", "frenoActivo": false}
+El prototipo usa USB para la ESP32, el sensor y la lógica del puente. El portapilas de **cuatro AA alcalinas en serie** da 6 V nominales a la etapa del motor. En serie se suma voltaje y se mantiene la capacidad en mAh de una celda. Los porcentajes son supuestos de cálculo para una demostración, no mediciones.
+
+| Componente y estado | Corriente de referencia | Uso estimado | Promedio |
+| --- | ---: | ---: | ---: |
+| ESP32 radio Wi-Fi TX, 3,3 V | 240 mA | 10 % | 24 mA |
+| ESP32 radio Wi-Fi RX, 3,3 V | 100 mA | 90 % | 90 mA |
+| HC-SR04, 5 V | 15 mA | 100 % | 15 mA |
+| L298N lógica, 5 V | 36 mA | 100 % | 36 mA |
+| LED de módulo, 5 V | 2 mA (supuesto de cálculo) | 100 % | 2 mA |
+| L298N etapa de potencia habilitada, 6 V, consumo propio | 70 mA | 25 % | 17,5 mA |
+| L298N etapa de potencia deshabilitada, 6 V | 4 mA | 75 % | 3 mA |
+| Motor pequeño de referencia en marcha | 560 mA | 25 % | 140 mA |
+| Motor detenido | 0 mA | 75 % | 0 mA |
+
+Fuentes de la tabla. [ESP32, consumo RF](https://documentation.espressif.com/esp32_datasheet_en.html), [HC-SR04, ElecFreaks](https://www.digikey.co.uk/htmldatasheets/production/3822706/0/0/1/hc-sr04.pdf), [L298, características eléctricas](https://www.st.com/resource/en/datasheet/l298.pdf), [L298N, corriente de lógica](https://docs.sunfounder.com/projects/sf-components/en/latest/component_l298n_module.html), [motor DC de referencia, Mabuchi FA-130RA-18100](https://product.mabuchi-motor.com/detail.html?id=10), [curvas Duracell MN1500](https://media.digikey.com/pdf/Data%20Sheets/Duracell/MN1500.pdf).
+
+La etapa de 6 V suma **160,5 mA**. En USB se estiman **0,64 W** de carga de componentes antes de pérdidas y consumo de la placa base, calculados como 3,3 V × 114 mA + 5 V × 53 mA. El conjunto suma aproximadamente **1,60 W** con los supuestos de la tabla. Con **1.200 mAh útiles de referencia** por celda, un valor supuesto dependiente de carga y tensión de corte, la autonomía de la rama AA es **1.200 × 0,8 ÷ 160,5 ≈ 6,0 h**. El motor instalado está sin referencia confirmada, por lo que la cifra sirve como estimación de orden de magnitud y no incluye picos de arranque o atasco.
+
+El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El teléfono recibe tramas en un solo flujo, guarda una parte de las lecturas en vivo y reintenta con espera creciente. La pantalla y el Wi-Fi continuo siguen consumiendo energía. La ESP32 permanece despierta para responder al control y al sensor. La autonomía de la ESP32 no aplica al llevar alimentación USB.
+
+## 9. Compatibilidad
+
+| Dato | Valor |
+| --- | --- |
+| `minSdk` | 26, Android 8.0. |
+| `targetSdk` | 36, Android 16. |
+| `compileSdk` | 36.1. |
+| ABIs | APK universal verificado con `aapt2`: `arm64-v8a`, `armeabi-v7a`, `x86` y `x86_64`. |
+
+| Dispositivo | Android | Resultado |
+| --- | --- | --- |
+| Teléfono del equipo | Modelo y versión por completar | El equipo confirmó funcionamiento físico de sensor, app y motor antes de la actualización ES3. |
+| Android Emulator x86_64 | API 37 | APK 1.1 instalado. Se verificó arranque sin cuentas preconfiguradas y creación de una cuenta local. |
+
+## 10. Cómo compilar y ejecutar
+
+- **Firmware.** Abrir [esp32.ino](firmware/esp32/esp32.ino) dentro de su carpeta en Arduino IDE 2.3.11 con **esp32 de Espressif Systems 3.3.12** y la placa **ESP32 Dev Module**. Copiar la plantilla a `wifi_secrets.h`, escribir la clave propia y conservar `AUTO_IOT_USE_SERVOS 0` en `opciones.h`. Cargar a 115200 por USB. [Instrucciones de firmware](firmware/esp32/README.md)
+- **Android.** Abrir la raíz en Android Studio con JDK integrado, Gradle 9.3.1 y SDK de compilación 36.1. Ejecutar `gradle :app:assembleDebug` o **Build → Build APK(s)**. El resultado se genera en `app/build/outputs/apk/debug/app-debug.apk`. La distribución se guarda fuera del árbol fuente en [GitHub Releases](https://github.com/diegofic4/Auto-IoT/releases). El APK de la evaluación usa firma de depuración.
+- **Arranque.** Asegurar el auto con las ruedas libres, alimentar la ESP32 por USB, conectar las pilas del motor y unir el teléfono a `Auto_IoT_Control`. Crear una cuenta local, elegir **Wi-Fi Local (ESP32)** y conectar a `192.168.4.1:80`.
+
+Para compilar por primera vez, generar `debug.keystore` en la raíz con el `keytool` del JDK. Los parámetros siguientes son los del perfil local de depuración de Android. El almacén queda excluido de Git.
+
+```sh
+keytool -genkeypair -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 ```
-- **Comandos de Dirección Soportados**:
-  - **HTTP REST**: `/adelante` (`AVANZANDO`), `/izquierda` (`GIRANDO_IZQUIERDA`), `/derecha` (`GIRANDO_DERECHA`), `/atras` (`RETROCEDIENDO`), `/parar` (`DETENIDO`).
-  - **Bluetooth RFCOMM**: `ADELANTE\n`, `IZQUIERDA\n`, `DERECHA\n`, `ATRAS\n`, `PARAR\n`.
-- **Regla de Seguridad Física (`<= 15 cm`)**: Cuando `distancia <= 15`, se activa el freno automático, se muestra el banner rojo **`⚠️ FRENO ACTIVO`** y el botón **`ADELANTE`** queda bloqueado en la interfaz y en el ViewModel, permitiendo girar (`IZQUIERDA` / `DERECHA`), detener (`PARAR`) o retroceder (`ATRÁS`) para despejar el obstáculo.
 
----
+### Demostración de 9 minutos
 
-## 6. Compilación, Generación de APK y Ejecución del Simulador Python
+| Tiempo | Prueba |
+| --- | --- |
+| 0–2 min | Mostrar ESP32, sensor, puente, pilas y dos fuentes de alimentación. Mostrar la distancia y la hora de la lectura. |
+| 2–5 min | Avanzar con un objeto a 30 cm. Acercarlo hasta 15 cm, mostrar corte del motor, retirar objeto, volver a dar orden y pulsar Parar. Mostrar ACK/ERR con hora en Eventos. |
+| 5–7 min | Intentar asociarse con una clave Wi-Fi errónea y luego conectar con la propia. En un computador conectado al AP probar `curl.exe -i http://192.168.4.1/inexistente` y `curl.exe -i -X POST "http://192.168.4.1/luz?valor=9"`. Deben devolver 404 y 422 sin movimiento. |
+| 7–9 min | Apagar la ESP32 y mostrar aviso y reintentos. Encenderla y comprobar recuperación sin reiniciar la app. Para mostrar lecturas guardadas, desconectar solo el Wi-Fi del teléfono durante 20–30 s con la ESP32 encendida. Volver a unirlo y abrir **Historial → Recuperadas**. |
 
-1. **Generar APK en Android Studio**:
-   - Abra el proyecto en Android Studio y seleccione **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
-   - El APK se generará en `app/build/outputs/apk/debug/app-debug.apk`.
-2. **Simulador Externo en Python (`simulador_esp32.py`)**:
-   ```bash
-   python3 simulador_esp32.py --mode http --port 8080
-   ```
-   - Para Bluetooth RFCOMM desde PC: `python3 simulador_esp32.py --mode bt-server`.
+## 11. Qué no funcionó y qué mejoraríamos
 
----
-
-## 7. Guía de Pruebas y Validación Técnica en Sala (7 a 10 minutos)
-
-Esta guía detalla el paso a paso exacto para verificar los 5 puntos exigidos en la dinámica de revisión docente:
-
-### 7.1 Inicio de Sesión y Persistencia Cifrada (Criterio A2 / ISO 27400)
-1. **Verificación de Cero Texto Plano:**
-   - En la pantalla de login, verificar en la tarjeta de auditoría que las credenciales no existen en texto plano, mostrando el `Salt (Base64)` de 16 bytes y el `Hash SHA-256`.
-   - Los datos residen en `EncryptedSharedPreferences` respaldados por Android Keystore (`AES256_GCM`).
-2. **Persistencia de Sesión:**
-   - Iniciar sesión con la cuenta demo `@operador_ot`.
-   - Cerrar forzosamente la aplicación desde las apps recientes de Android y volver a abrirla.
-   - **Resultado:** La sesión se restaura automáticamente ingresando directo al panel de teleoperación.
-
-### 7.2 Permisos en Runtime y Consentimiento Informado (Criterio A3 / ISO 27400)
-1. **Pop-up de Justificación Previa:**
-   - Al pulsar conectar en la Pestaña 2, se despliega el diálogo informativo en Compose explicando el uso técnico de Bluetooth/Wi-Fi antes de llamar al sistema operativo.
-2. **Prueba de Denegación (Tolerancia a Fallos):**
-   - Presionar "Continuar" y luego pulsar **Denegar** en el permiso de Android.
-   - **Resultado:** Cero crashes (sin cierres inesperados). La app permanece operativa, informa la restricción y habilita el botón hacia Ajustes.
-3. **Prueba de Concesión:**
-   - Otorgar los permisos para desbloquear los selectores de red.
-
-### 7.3 Demostración de Comunicación en Vivo (Criterio A4)
-1. **Modo Celular ↔ Celular o ESP32:**
-   - Iniciar el servidor en el Celular A (o encender el ESP32 / script Python).
-   - Conectar el Celular B ingresando la IP y puerto (o enlace Bluetooth RFCOMM).
-   - **Resultado:** El estado cambia a **"Conectado"** y la distancia ultrasónica fluctúa en tiempo real en la pantalla.
-2. **Teleoperación de 5 Direcciones:**
-   - Presionar `▲ ADELANTE`, `◄ IZQUIERDA`, `■ PARAR`, `DERECHA ►` y `▼ ATRÁS`, verificando la recepción inmediata de comandos.
-
-### 7.4 Prueba de Regla de Seguridad OT (Frenado Autónomo)
-1. Colocar un obstáculo frente al sensor a una distancia **menor o igual a 15 cm**.
-2. **Resultado:** Se activa el banner rojo **`⚠️ FRENO ACTIVO`** y el botón **`ADELANTE`** se bloquea automáticamente en la UI para impedir choques frontales, manteniendo activos el giro, retroceso y parada.
-
-### 7.5 Pruebas de Robustez (Criterio A5)
-1. **Rotación de Pantalla:**
-   - Con telemetría continua en vivo, rotar el teléfono de vertical a horizontal.
-   - **Resultado:** La interfaz se reorganiza en 2 columnas paralelas sin desconectarse ni reiniciar valores a cero (gestión en `ViewModelScope`).
-2. **Desconexión Forzada:**
-   - Con la telemetría activa, apagar bruscamente el Hotspot/Wi-Fi del emisor o detener el servidor.
-   - **Resultado:** La aplicación no se congela ni crashea; captura las excepciones de red en `Dispatchers.IO`, cierra los sockets de forma segura y actualiza el estado visual a **"Desconectado / Error de enlace"**.
-
----
-
-## 8. Descarga Directa del Instalador (.apk)
-
-- **Versión Evaluada:** [Descargar APK v1.0.0 (ot-shield-monitor.apk)](https://github.com/diegofic4/Auto-IoT/releases/download/v1.0.0/ot-shield-monitor.apk)
-
+- El primer HC-SR04 no entregaba eco. Se reemplazó y el equipo confirmó que la lectura volvió a funcionar. Esta versión diferencia el fallo de eco de un obstáculo cerca.
+- El LED del L298N se apagó después de un cambio de pilas durante el armado. El equipo confirmó después que el montaje volvió a funcionar con cuatro AA.
+- El prototipo utiliza un motor y un L298N. El giro independiente, el servo y la cámara quedan fuera del montaje evaluado.
+- Las lecturas se recuperan dentro de la capacidad de NVS y mientras la ESP32 recibe alimentación para capturarlas. Los datos ya confirmados quedan en Android.
+- El protocolo podría incorporar autenticación por dispositivo y cifrado de aplicación. El perfil de prueba conserva el modo de preferencias privadas de Android si Android Keystore no está disponible.
