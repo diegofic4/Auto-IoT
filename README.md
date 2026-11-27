@@ -129,7 +129,7 @@ El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El 
 
 | Dispositivo | Android | Resultado |
 | --- | --- | --- |
-| Teléfono del equipo | Modelo y versión por completar | El equipo confirmó funcionamiento físico de sensor, app y motor antes de la actualización ES3. |
+| Teléfono del equipo | Modelo y versión por completar | El equipo confirmó que la lectura guardada durante un corte de Wi-Fi apareció en el historial al volver a conectar el teléfono con la ESP32 física. |
 | Android Emulator x86_64 | API 37 | Se verificaron instalación, telemetría con hora y recuperación de lecturas en SQLite tras una caída simulada. En 1.2 el historial quedó visible durante el corte. |
 
 ## 10. Cómo compilar y ejecutar
@@ -160,4 +160,4 @@ keytool -genkeypair -keystore debug.keystore -storepass android -alias androidde
 - El prototipo utiliza un motor y un L298N. El giro independiente, el servo y la cámara quedan fuera del montaje evaluado.
 - Las lecturas se recuperan dentro de la capacidad de NVS y mientras la ESP32 recibe alimentación para capturarlas. Los datos ya confirmados quedan en Android.
 - El protocolo podría incorporar autenticación por dispositivo y cifrado de aplicación. El perfil de prueba conserva el modo de preferencias privadas de Android si Android Keystore no está disponible.
-- El firmware ES3 compiló con Arduino ESP32 3.3.12. El banco C verificó el corte de ENA a 15 cm y la parada por pérdida de enlace. La recuperación del APK se probó con el historial simulado del banco. Queda por repetir la sincronización con NVS real y comprobar la versión 1.2 en el teléfono del equipo.
+- El firmware ES3 compiló con Arduino ESP32 3.3.12. El banco C verificó el corte de ENA a 15 cm y la parada por pérdida de enlace. El equipo repitió en el prototipo físico la prueba de recuperación del historial que se había realizado en el banco virtual.
