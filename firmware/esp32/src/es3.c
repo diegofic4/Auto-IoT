@@ -18,6 +18,7 @@
 
 #define ARCHIVE_CAPACITY 32
 #define ARCHIVE_PERIOD_MS 15000
+#define OFFLINE_CHECK_MS 250
 #define EVENT_PERIOD_MS 650
 #define HEARTBEAT_TIMEOUT_US 3000000
 
@@ -58,16 +59,18 @@ static bool persist_archive(void)
 static void archive_task(void *unused)
 {
     (void)unused;
+    int64_t next_capture_us = 0;
 
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(ARCHIVE_PERIOD_MS));
-        vehicle_snapshot_t snapshot;
-        vehicle_read_snapshot(false, &snapshot);
-        int64_t now = esp_timer_get_time();
-
+        vTaskDelay(pdMS_TO_TICKS(OFFLINE_CHECK_MS));
         xSemaphoreTake(archive_lock, portMAX_DELAY);
-        bool online = last_heartbeat_us != 0 && now - last_heartbeat_us <= HEARTBEAT_TIMEOUT_US;
-        if (!online && archive.count < ARCHIVE_CAPACITY) {
+        int64_t now = esp_timer_get_time();
+        bool online = now - last_heartbeat_us <= HEARTBEAT_TIMEOUT_US;
+        if (online) {
+            next_capture_us = 0;
+        } else if (now >= next_capture_us && archive.count < ARCHIVE_CAPACITY) {
+            vehicle_snapshot_t snapshot;
+            vehicle_read_snapshot(false, &snapshot);
             archive.readings[archive.count++] = (reading_t) {
                 .boot = boot_id,
                 .uptime_ms = (uint64_t)now / 1000,
@@ -77,6 +80,7 @@ static void archive_task(void *unused)
             if (!persist_archive()) {
                 --archive.count;
             }
+            next_capture_us = now + ARCHIVE_PERIOD_MS * 1000LL;
         }
         xSemaphoreGive(archive_lock);
     }
@@ -97,13 +101,17 @@ static esp_err_t send_reading(httpd_req_t *request, const reading_t *reading,
     if (reading->boot == boot_id) {
         age_ms = esp_timer_get_time() / 1000 - (int64_t)reading->uptime_ms;
     }
+    uint64_t reading_id = reading->uptime_ms;
+    if (live) {
+        reading_id |= UINT64_C(1) << 63;
+    }
 
     char line[336];
     int length = snprintf(line, sizeof(line),
         "{\"idLectura\":\"%016" PRIx64 "-%016" PRIx64 "\",\"capturaMs\":%" PRIu64
         ",\"edadMs\":%" PRId64 ",\"historial\":%s,\"distancia\":%.2f,"
         "\"distanciaValida\":%s,\"estadoMotor\":\"%s\",\"frenoActivo\":%s,\"motivoFreno\":\"%s\"}\n",
-        reading->boot, reading->uptime_ms, reading->uptime_ms, age_ms, live ? "false" : "true",
+        reading->boot, reading_id, reading->uptime_ms, age_ms, live ? "false" : "true",
         (double)reading->distance_cm, reading->valid ? "true" : "false",
         live ? live->motor_state : "DETENIDO",
         (live ? live->brake_active : !reading->valid || reading->distance_cm <= 15.0f) ? "true" : "false",
@@ -133,6 +141,12 @@ static void stream_task(void *argument)
     }
 
     while (result == ESP_OK) {
+        xSemaphoreTake(archive_lock, portMAX_DELAY);
+        bool online = esp_timer_get_time() - last_heartbeat_us <= HEARTBEAT_TIMEOUT_US;
+        xSemaphoreGive(archive_lock);
+        if (!online) {
+            break;
+        }
         vehicle_snapshot_t snapshot;
         vehicle_read_snapshot(false, &snapshot);
         reading_t current = {
@@ -259,6 +273,7 @@ esp_err_t es3_register(httpd_handle_t server)
         return ESP_FAIL;
     }
     boot_id = (uint64_t)esp_random() << 32 | esp_random();
+    last_heartbeat_us = esp_timer_get_time();
     archive_lock = xSemaphoreCreateMutex();
     stream_slot = xSemaphoreCreateBinary();
     if (!archive_lock || !stream_slot) {

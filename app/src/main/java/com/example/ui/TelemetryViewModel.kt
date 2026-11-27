@@ -7,6 +7,7 @@ import com.example.connectivity.BluetoothManager
 import com.example.connectivity.Esp32WifiClient
 import com.example.model.ConnectionState
 import com.example.model.PairedBluetoothDevice
+import com.example.model.SavedTelemetry
 import com.example.model.TransportMode
 import com.example.model.VehicleCommand
 import com.example.model.VehicleTelemetry
@@ -59,7 +60,7 @@ data class VehicleUiState(
     val frenoActivo: Boolean = false,
     val hasReceivedFirstPacket: Boolean = false,
     val telemetryHistory: List<VehicleTelemetry> = emptyList(),
-    val archivedHistory: List<VehicleTelemetry> = emptyList(),
+    val savedWifiHistory: SavedTelemetry = SavedTelemetry(),
     val systemEventLog: List<String> = emptyList(),
 
     // 5. Estadísticas de Misión OT
@@ -103,7 +104,7 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
         externalScope = viewModelScope,
         onStateChanged = ::handleConnectionStateChange,
         onTelemetryReceived = ::handleIncomingTelemetry,
-        onArchiveRestored = { records -> _uiState.update { it.copy(archivedHistory = records) } },
+        onHistoryChanged = { history -> _uiState.update { it.copy(savedWifiHistory = history) } },
         onSystemLog = ::appendSystemLog
     )
 
@@ -125,13 +126,9 @@ class TelemetryViewModel(application: Application) : AndroidViewModel(applicatio
         val initialPalette = com.example.ui.theme.AppPalette.fromId(savedPaletteId)
 
         viewModelScope.launch(Dispatchers.IO) {
-            val saved = esp32WifiClient.recentStoredReadings(MAX_TELEMETRY_HISTORY)
-            val archived = esp32WifiClient.recentStoredReadings(MAX_TELEMETRY_HISTORY, archivedOnly = true)
+            val saved = esp32WifiClient.readStoredHistory()
             _uiState.update { state ->
-                state.copy(
-                    telemetryHistory = state.telemetryHistory.ifEmpty { saved },
-                    archivedHistory = state.archivedHistory.ifEmpty { archived }
-                )
+                state.copy(savedWifiHistory = state.savedWifiHistory.takeIf { it.recent.isNotEmpty() } ?: saved)
             }
         }
 

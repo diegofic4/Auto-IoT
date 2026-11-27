@@ -6,6 +6,7 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import com.example.model.ConnectionState
+import com.example.model.SavedTelemetry
 import com.example.model.TelemetryStore
 import com.example.model.TransportMode
 import com.example.model.VehicleCommand
@@ -67,7 +68,7 @@ class Esp32WifiClient(
     private val externalScope: CoroutineScope,
     private val onStateChanged: (ConnectionState) -> Unit,
     private val onTelemetryReceived: (VehicleTelemetry) -> Unit,
-    private val onArchiveRestored: (List<VehicleTelemetry>) -> Unit,
+    private val onHistoryChanged: (SavedTelemetry) -> Unit,
     private val onSystemLog: (String) -> Unit
 ) {
 
@@ -82,6 +83,7 @@ class Esp32WifiClient(
         private const val MAX_RETRY_MS = 8000L
         private const val HEARTBEAT_INTERVAL_MS = 1200L
         private const val LOCAL_SAMPLE_INTERVAL_MS = 5000L
+        private const val HISTORY_LIMIT = 35
     }
 
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
@@ -146,10 +148,19 @@ class Esp32WifiClient(
     private suspend fun pollTelemetry(connection: Connection) {
         var retryMs = FIRST_RETRY_MS
         var legacy = false
+        var lastSaved = 0L
+
+        fun saveLiveIfDue(telemetry: VehicleTelemetry, now: Long): Boolean {
+            if (lastSaved != 0L && now - lastSaved < LOCAL_SAMPLE_INTERVAL_MS) return false
+            telemetryStore.save(connection.label, telemetry)
+            lastSaved = now
+            return true
+        }
 
         while (currentCoroutineContext().isActive) {
             var call: Call? = null
             var waitMs = POLLING_INTERVAL_MS
+            var restored = 0
             try {
                 val client = clientForHost(connection.url.host)
                 val nextCall = if (legacy) {
@@ -172,14 +183,14 @@ class Esp32WifiClient(
                     val body = response.body ?: throw IOException("Telemetría vacía")
                     if (legacy) {
                         val telemetry = parseReading(connection, body.string()).getOrThrow()
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (saveLiveIfDue(telemetry, now)) onHistoryChanged(readStoredHistory())
                         if (!publishReading(connection, telemetry)) return
                         retryMs = FIRST_RETRY_MS
                     } else {
                         val source = body.source()
                         var pendingAck: String? = null
                         var lastHeartbeat = 0L
-                        var lastSaved = 0L
-                        var restored = 0
                         while (currentCoroutineContext().isActive) {
                             val line = source.readUtf8LineStrict(335)
                             val telemetry = parseReading(connection, line).getOrThrow()
@@ -191,19 +202,17 @@ class Esp32WifiClient(
                             }
 
                             val now = android.os.SystemClock.elapsedRealtime()
+                            if (saveLiveIfDue(telemetry, now) || restored > 0) {
+                                onHistoryChanged(readStoredHistory())
+                            }
+                            if (restored > 0) {
+                                onSystemLog("$restored lecturas recuperadas del ESP32 y guardadas en el historial.")
+                                restored = 0
+                            }
                             if (pendingAck != null || lastHeartbeat == 0L || now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-                                if (restored > 0) {
-                                    onArchiveRestored(telemetryStore.recent(35, archivedOnly = true))
-                                    onSystemLog("$restored lecturas recuperadas del ESP32 y guardadas en el historial.")
-                                    restored = 0
-                                }
                                 sendHeartbeat(connection, client, pendingAck)
                                 pendingAck = null
                                 lastHeartbeat = now
-                            }
-                            if (lastSaved == 0L || now - lastSaved >= LOCAL_SAMPLE_INTERVAL_MS) {
-                                telemetryStore.save(connection.label, telemetry)
-                                lastSaved = now
                             }
                             if (!publishReading(connection, telemetry)) return
                             retryMs = FIRST_RETRY_MS
@@ -233,6 +242,7 @@ class Esp32WifiClient(
                 synchronized(connectionLock) {
                     if (connection.pollCall === call) connection.pollCall = null
                 }
+                if (restored > 0) onHistoryChanged(readStoredHistory())
             }
             delay(waitMs)
         }
@@ -280,8 +290,7 @@ class Esp32WifiClient(
         }
     }
 
-    fun recentStoredReadings(limit: Int, archivedOnly: Boolean = false): List<VehicleTelemetry> =
-        telemetryStore.recent(limit, archivedOnly)
+    fun readStoredHistory(): SavedTelemetry = telemetryStore.history(HISTORY_LIMIT)
 
     /**
      * Envía la orden solo en la conexión en que se solicitó. La reconexión

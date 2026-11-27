@@ -165,8 +165,9 @@ def serve(bench, port, starting_distance):
     def reading(historical):
         _, payload = bench.request("/telemetria")
         uptime = (time.monotonic_ns() - started) // 1_000_000
+        reading_id = uptime if historical else uptime | (1 << 63)
         payload.update(
-            idLectura=f"{boot}-{uptime:016x}",
+            idLectura=f"{boot}-{reading_id:016x}",
             capturaMs=uptime,
             edadMs=0,
             historial=historical,
@@ -175,14 +176,15 @@ def serve(bench, port, starting_distance):
 
     def sample_forever():
         previous = time.monotonic()
-        next_archive = previous + 15
+        next_archive = 0
         while not stopping.wait(0.07):
             now = time.monotonic()
             with lock:
                 bench.sample(target_distance, int((now - previous) * 1_000_000))
-                if now >= next_archive:
-                    if not station_connected and len(archive) < 32:
-                        archive.append(reading(True))
+                if station_connected:
+                    next_archive = 0
+                elif now >= next_archive and len(archive) < 32:
+                    archive.append(reading(True))
                     next_archive = now + 15
             previous = now
 

@@ -407,8 +407,13 @@ fun VehicleDashboardScreen(
                     // Consola de paquetes JSON (/telemetria) y bitácora de eventos
                     item {
                         ProtocolAuditConsoleCard(
-                            telemetryHistory = uiState.telemetryHistory,
-                            archivedHistory = uiState.archivedHistory,
+                            telemetryHistory = if (uiState.selectedTransport == TransportMode.WIFI_ESP32) {
+                                uiState.savedWifiHistory.recent
+                            } else {
+                                uiState.telemetryHistory
+                            },
+                            archivedHistory = uiState.savedWifiHistory.recovered,
+                            connectionState = uiState.connectionState,
                             systemLogs = uiState.systemEventLog,
                             onClearLogs = onClearLogs
                         )
@@ -912,7 +917,11 @@ private fun LiveTelemetryAndMotorControlCard(
                             Spacer(modifier = Modifier.height(6.dp))
                             uiState.lastReadingEpochMs?.let { receivedAt ->
                                 Text(
-                                    text = "Última lectura · ${formatReadingTime(receivedAt)}",
+                                    text = if (uiState.connectionState is ConnectionState.Connected) {
+                                        "Última lectura · ${formatReadingTime(receivedAt)}"
+                                    } else {
+                                        "Última lectura recibida · ${formatReadingTime(receivedAt)} · Sin enlace"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = palette.textSecondary
                                 )
@@ -2272,11 +2281,13 @@ private fun UserProfileAndSecurityDialog(
 private fun ProtocolAuditConsoleCard(
     telemetryHistory: List<VehicleTelemetry>,
     archivedHistory: List<VehicleTelemetry>,
+    connectionState: ConnectionState,
     systemLogs: List<String>,
     onClearLogs: () -> Unit
 ) {
     val palette = LocalAppPalette.current
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var visibleCount by rememberSaveable(selectedTab) { mutableStateOf(8) }
     val displayReadings = if (selectedTab == 1) archivedHistory else telemetryHistory
 
     Card(
@@ -2319,11 +2330,22 @@ private fun ProtocolAuditConsoleCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteSweep,
-                        contentDescription = "Limpiar consola",
+                        contentDescription = "Limpiar eventos de la sesión",
                         tint = palette.textSecondary
                     )
                 }
             }
+
+            Text(
+                text = when (connectionState) {
+                    is ConnectionState.Connected -> "Enlace activo · Historial disponible"
+                    is ConnectionState.Connecting -> "Conectando · Historial disponible"
+                    is ConnectionState.Error -> "Enlace interrumpido · Historial disponible"
+                    ConnectionState.Disconnected -> "Sin conexión · Historial disponible"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2332,7 +2354,7 @@ private fun ProtocolAuditConsoleCard(
                 FilterChip(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    label = { Text("Tramas") },
+                    label = { Text("Lecturas") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = palette.primary.copy(alpha = 0.2f),
                         selectedLabelColor = palette.primary
@@ -2372,7 +2394,7 @@ private fun ProtocolAuditConsoleCard(
                     )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        displayReadings.take(8).forEach { pkt ->
+                        displayReadings.take(visibleCount).forEach { pkt ->
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
@@ -2402,6 +2424,14 @@ private fun ProtocolAuditConsoleCard(
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
+                                    if (pkt.archived) {
+                                        Text("Recuperada del ESP32", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    Text(
+                                        text = if (pkt.distanceValid) "${pkt.distancia} cm" else "Sin eco",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = palette.textPrimary
+                                    )
                                     val capturedAt = pkt.capturedAtEpochMs
                                     Text(
                                         text = if (pkt.archived && capturedAt != null) {
@@ -2418,6 +2448,11 @@ private fun ProtocolAuditConsoleCard(
                                         color = palette.textPrimary
                                     )
                                 }
+                            }
+                        }
+                        if (displayReadings.size > visibleCount) {
+                            TextButton(onClick = { visibleCount += 8 }) {
+                                Text("Ver más lecturas")
                             }
                         }
                     }

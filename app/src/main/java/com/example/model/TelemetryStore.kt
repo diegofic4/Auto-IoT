@@ -4,6 +4,12 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.util.UUID
+
+data class SavedTelemetry(
+    val recent: List<VehicleTelemetry> = emptyList(),
+    val recovered: List<VehicleTelemetry> = emptyList()
+)
 
 class TelemetryStore(context: Context) : SQLiteOpenHelper(
     context.applicationContext, "telemetria.db", null, 1
@@ -24,7 +30,7 @@ class TelemetryStore(context: Context) : SQLiteOpenHelper(
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     fun save(host: String, telemetry: VehicleTelemetry): Boolean {
-        val readingId = requireNotNull(telemetry.readingId)
+        val readingId = telemetry.readingId ?: UUID.randomUUID().toString()
         val values = ContentValues().apply {
             put("id", "$host/$readingId")
             put("received_at", telemetry.timestampEpochMs)
@@ -37,7 +43,12 @@ class TelemetryStore(context: Context) : SQLiteOpenHelper(
         ) != -1L
     }
 
-    fun recent(limit: Int, archivedOnly: Boolean = false): List<VehicleTelemetry> {
+    fun history(limit: Int): SavedTelemetry = SavedTelemetry(
+        recent = recent(limit, archivedOnly = false),
+        recovered = recent(limit, archivedOnly = true)
+    )
+
+    private fun recent(limit: Int, archivedOnly: Boolean): List<VehicleTelemetry> {
         return readableDatabase.query(
             "readings", arrayOf("entry", "received_at", "transport", "json"),
             if (archivedOnly) "archived = 1" else null, null, null, null,

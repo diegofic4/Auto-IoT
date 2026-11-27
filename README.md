@@ -43,7 +43,7 @@ La ESP32 sirve HTTP local en `192.168.4.1:80`. Las órdenes de tracción son rut
 | App → ESP32 | `GET /flash` | Sin parámetros | Alterna la luz opcional. |
 | App → ESP32 | `POST /luz?valor=0` o `valor=1` | Un valor entero literal, sin cuerpo | `200 ACK`, `400 ERR TRAMA_INVALIDA` o `422 ERR VALOR_FUERA_DE_RANGO`. |
 | Navegador → ESP32 | `GET /telemetria` | Sin parámetros | Lectura instantánea con distancia en cm, validez, motor, freno y motivo. |
-| ESP32 → app | `GET /eventos` | Una suscripción HTTP, un cliente a la vez | Cola recuperada y después una lectura cada 650 ms, sin una petición por dato. |
+| ESP32 → app | `GET /eventos` | Una suscripción HTTP, un cliente a la vez | Cola recuperada y después una lectura cada 650 ms, sin una petición por dato. El canal se reabre si caduca el latido. |
 | App → ESP32 | `POST /latido` con `ack` opcional | Sin cuerpo. `ack` admite 16 dígitos hexadecimales, un guion y otros 16. | Confirma el enlace y, cuando hay ID, libera las lecturas ya guardadas en SQLite. |
 | Cliente → ESP32 | Ruta inexistente | Por ejemplo, `GET /inexistente` | `404 ERR COMANDO_DESCONOCIDO`. |
 
@@ -72,7 +72,7 @@ Estas medidas se alinean con control de acceso, reducción de superficie y prote
 
 ## 6. Reconexión y plan de contingencia
 
-Android reintenta después de 1, 2, 4 y hasta 8 s. Al recibir una lectura válida vuelve a 1 s. Se indica error y reintento en la pantalla de conexión y se conserva la hora de la última lectura. Android debe permitir que el teléfono permanezca en el Wi-Fi local sin Internet. El vehículo vuelve a moverse solo después de una nueva orden explícita.
+Android reintenta después de 1, 2, 4 y hasta 8 s. Al recibir una lectura válida vuelve a 1 s. Se indica el estado del enlace y se conserva la hora de la última lectura. El teléfono y la ESP32 se enlazan por `Auto_IoT_Control`, la red local que crea la placa. Android debe permitir permanecer conectado aunque no haya Internet. Si el teléfono se cambia de red, hay que volver al Wi-Fi de la ESP32. El vehículo vuelve a moverse solo después de una nueva orden explícita.
 
 | Falla | Acción y recuperación |
 | --- | --- |
@@ -84,13 +84,13 @@ Android reintenta después de 1, 2, 4 y hasta 8 s. Al recibir una lectura válid
 
 ## 7. Almacenamiento temporal sin conexión
 
-Android guarda lecturas del canal nuevo en **SQLite**. Durante la conexión conserva una muestra de cada 5 s y persiste todas las lecturas recuperadas. Cada una tiene una clave única de endpoint e ID de lectura. La app confirma el último ID de una serie recuperada solo después de insertar todas las filas anteriores. Si el ACK se pierde, el ESP32 reenvía la serie y SQLite ignora los IDs ya guardados. La app conserva el historial tras un reinicio y permite mostrar lecturas recuperadas aunque se desconecte. Los comandos de motor caducados quedan fuera de la sincronización para proteger el arranque.
+Android guarda en **SQLite** una muestra de Wi-Fi cada 5 s y todas las lecturas recuperadas. Cada lectura del flujo tiene una clave única de endpoint e ID. La app confirma el último ID de una serie recuperada solo después de insertar todas las filas anteriores. Si el ACK se pierde, el ESP32 reenvía la serie y SQLite ignora los IDs ya guardados. **Historial y Cuenta → Lecturas** consulta las muestras persistidas aunque se corte el enlace o se cierre la app. **Recuperadas** muestra las obtenidas de la flash. Ambas vistas se actualizan automáticamente al volver al Wi-Fi de la ESP32. La placa debe permanecer encendida para seguir tomando muestras durante el corte. Los comandos caducados quedan fuera de la sincronización.
 
 | Dato | ESP32 |
 | --- | --- |
 | Mecanismo | NVS, clave `lecturas_v1` en el espacio `auto_iot_es3`. |
 | Tamaño | 24 bytes por lectura en el objetivo ESP32. El bloque para 32 lecturas ocupa aproximadamente 0,8 KiB, más metadatos de NVS. |
-| Frecuencia | Una captura cada 15 s cuando no llega un latido de la app. El ciclo de control del sensor sigue a 70 ms. |
+| Frecuencia | Primera captura al detectar aproximadamente 3 s sin latido desde el último intercambio. Después guarda una captura cada 15 s mientras siga sin enlace. El ciclo de control del sensor sigue a 70 ms. |
 | Capacidad | 32 lecturas, aproximadamente 8 min sin enlace y con la placa encendida. |
 | Cola llena | Conserva las 32 lecturas pendientes hasta confirmarlas. Las nuevas muestras offline se omiten mientras está llena. |
 | Desgaste | Una actualización NVS por muestra offline, ninguna por evento en vivo y una por lote confirmado. NVS administra las escrituras en flash. |
@@ -130,12 +130,12 @@ El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El 
 | Dispositivo | Android | Resultado |
 | --- | --- | --- |
 | Teléfono del equipo | Modelo y versión por completar | El equipo confirmó funcionamiento físico de sensor, app y motor antes de la actualización ES3. |
-| Android Emulator x86_64 | API 37 | Se verificaron instalación, registro de una cuenta local, telemetría con hora y recuperación de dos lecturas con IDs distintos en SQLite tras una caída simulada. La versión 1.1.1 mantuvo el flujo abierto durante varios latidos seguidos. |
+| Android Emulator x86_64 | API 37 | Se verificaron instalación, telemetría con hora y recuperación de lecturas en SQLite tras una caída simulada. En 1.2 el historial quedó visible durante el corte. |
 
 ## 10. Cómo compilar y ejecutar
 
 - **Firmware.** Abrir [esp32.ino](firmware/esp32/esp32.ino) dentro de su carpeta en Arduino IDE 2.3.11 con **esp32 de Espressif Systems 3.3.12** y la placa **ESP32 Dev Module**. Copiar la plantilla a `wifi_secrets.h`, escribir la clave propia y conservar `AUTO_IOT_USE_SERVOS 0` en `opciones.h`. Cargar a 115200 por USB. [Instrucciones de firmware](firmware/esp32/README.md)
-- **Android.** Abrir la raíz en Android Studio con JDK integrado, Gradle 9.3.1 y SDK de compilación 36.1. Ejecutar `gradle :app:assembleDebug` o **Build → Build APK(s)**. El resultado se genera en `app/build/outputs/apk/debug/app-debug.apk`. El APK de la evaluación usa firma de depuración. [Descarga de Auto-IoT 1.1.1](https://github.com/diegofic4/Auto-IoT/releases/tag/es3-v1.1.1)
+- **Android.** Abrir la raíz en Android Studio con JDK integrado, Gradle 9.3.1 y SDK de compilación 36.1. Ejecutar `gradle :app:assembleDebug` o **Build → Build APK(s)**. El resultado se genera en `app/build/outputs/apk/debug/app-debug.apk`. El APK de la evaluación usa firma de depuración. [Descargas de Auto-IoT](https://github.com/diegofic4/Auto-IoT/releases)
 - **Arranque.** Asegurar el auto con las ruedas libres, alimentar la ESP32 por USB, conectar las pilas del motor y unir el teléfono a `Auto_IoT_Control`. Crear una cuenta local, elegir **Wi-Fi Local (ESP32)** y conectar a `192.168.4.1:80`.
 
 Para compilar por primera vez, generar `debug.keystore` en la raíz con el `keytool` del JDK. Los parámetros siguientes son los del perfil local de depuración de Android. El almacén queda excluido de Git.
@@ -151,7 +151,7 @@ keytool -genkeypair -keystore debug.keystore -storepass android -alias androidde
 | 0–2 min | Mostrar ESP32, sensor, puente, pilas y dos fuentes de alimentación. Mostrar la distancia y la hora de la lectura. |
 | 2–5 min | Avanzar con un objeto a 30 cm. Acercarlo hasta 15 cm, mostrar corte del motor, retirar objeto, volver a dar orden y pulsar Parar. Mostrar ACK/ERR con hora en Eventos. |
 | 5–7 min | Intentar asociarse con una clave Wi-Fi errónea y luego conectar con la propia. En un computador conectado al AP probar `curl.exe -i http://192.168.4.1/inexistente` y `curl.exe -i -X POST "http://192.168.4.1/luz?valor=9"`. Deben devolver 404 y 422 sin movimiento. |
-| 7–9 min | Apagar la ESP32 y mostrar aviso y reintentos. Encenderla y comprobar recuperación sin reiniciar la app. Para mostrar lecturas guardadas, desconectar solo el Wi-Fi del teléfono durante 20–30 s con la ESP32 encendida. Volver a unirlo y abrir **Historial → Recuperadas**. |
+| 7–9 min | Apagar la ESP32 y mostrar aviso y reintentos. Encenderla y comprobar recuperación sin reiniciar la app. Para mostrar el historial, dejar la ESP32 encendida y desconectar solo el Wi-Fi del teléfono durante 20–30 s. Mostrar las lecturas ya guardadas en **Historial y Cuenta → Lecturas**. Volver a conectar el teléfono a `Auto_IoT_Control` y mostrar las muestras del corte en **Recuperadas**. |
 
 ## 11. Qué no funcionó y qué mejoraríamos
 
@@ -160,4 +160,4 @@ keytool -genkeypair -keystore debug.keystore -storepass android -alias androidde
 - El prototipo utiliza un motor y un L298N. El giro independiente, el servo y la cámara quedan fuera del montaje evaluado.
 - Las lecturas se recuperan dentro de la capacidad de NVS y mientras la ESP32 recibe alimentación para capturarlas. Los datos ya confirmados quedan en Android.
 - El protocolo podría incorporar autenticación por dispositivo y cifrado de aplicación. El perfil de prueba conserva el modo de preferencias privadas de Android si Android Keystore no está disponible.
-- El firmware ES3 compiló con Arduino ESP32 3.3.12. El banco C verificó el corte de ENA a 15 cm y la parada por pérdida de enlace. La recuperación del APK se probó con el historial simulado del banco. Queda por repetir la sincronización con NVS real y comprobar la versión 1.1.1 en el teléfono del equipo.
+- El firmware ES3 compiló con Arduino ESP32 3.3.12. El banco C verificó el corte de ENA a 15 cm y la parada por pérdida de enlace. La recuperación del APK se probó con el historial simulado del banco. Queda por repetir la sincronización con NVS real y comprobar la versión 1.2 en el teléfono del equipo.
