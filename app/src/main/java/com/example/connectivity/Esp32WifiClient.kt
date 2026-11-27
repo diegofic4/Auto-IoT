@@ -192,14 +192,14 @@ class Esp32WifiClient(
 
                             val now = android.os.SystemClock.elapsedRealtime()
                             if (pendingAck != null || lastHeartbeat == 0L || now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-                                sendHeartbeat(connection, client, pendingAck)
-                                pendingAck = null
-                                lastHeartbeat = now
                                 if (restored > 0) {
                                     onArchiveRestored(telemetryStore.recent(35, archivedOnly = true))
                                     onSystemLog("$restored lecturas recuperadas del ESP32 y guardadas en el historial.")
                                     restored = 0
                                 }
+                                sendHeartbeat(connection, client, pendingAck)
+                                pendingAck = null
+                                lastHeartbeat = now
                             }
                             if (lastSaved == 0L || now - lastSaved >= LOCAL_SAMPLE_INTERVAL_MS) {
                                 telemetryStore.save(connection.label, telemetry)
@@ -214,6 +214,7 @@ class Esp32WifiClient(
                 throw ce
             } catch (error: Exception) {
                 currentCoroutineContext().ensureActive()
+                legacy = false
                 val detail = networkErrorDetail(error)
                 synchronized(connectionLock) {
                     if (activeConnection !== connection) return
@@ -259,7 +260,12 @@ class Esp32WifiClient(
         val url = connection.url.newBuilder().addPathSegment("latido").apply {
             if (ack != null) addQueryParameter("ack", ack)
         }.build()
-        val request = Request.Builder().url(url).post(ByteArray(0).toRequestBody()).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Connection", "close")
+            .header("Accept", "application/json")
+            .post(ByteArray(0).toRequestBody())
+            .build()
         val call = client.newCall(request)
         synchronized(connectionLock) {
             if (activeConnection !== connection) return
