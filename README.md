@@ -4,8 +4,8 @@
 
 | Dato | Descripción |
 | --- | --- |
-| Integrantes | Diego Astudillo · Anibal San Martin · Benjamin Inostroz |
-| Sección | Por confirmar |
+| Integrantes | Diego Astudillo · Anibal San Martin · Benjamin Inostroza |
+| Sección | TI3042/D |
 | Problema | El operador necesita ver la distancia a un obstáculo y evitar que el prototipo siga avanzando cuando se acerca demasiado. |
 | Sistema | La ESP32 mide distancia, controla un motor DC y corta el avance a 15 cm o menos o si se pierde el eco. Auto IoT envía órdenes y muestra distancia, estado, freno e historial. |
 | Placa | Keyestudio ESP32 Plus con ESP32-WROOM-32. |
