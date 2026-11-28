@@ -129,7 +129,7 @@ El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El 
 
 | Dispositivo | Android | Resultado |
 | --- | --- | --- |
-| Teléfono del equipo | Modelo y versión por completar | El equipo confirmó que la lectura guardada durante un corte de Wi-Fi apareció en el historial al volver a conectar el teléfono con la ESP32 física. |
+| vivo Y38 5G | Android 16 | El equipo confirmó que la lectura guardada durante un corte de Wi-Fi apareció en el historial al volver a conectar el teléfono con la ESP32 física. |
 | Android Emulator x86_64 | API 37 | Se verificaron instalación, telemetría con hora y recuperación de lecturas en SQLite tras una caída simulada. En 1.2 el historial quedó visible durante el corte. |
 
 ## 10. Cómo compilar y ejecutar
