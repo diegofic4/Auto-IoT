@@ -12,7 +12,7 @@
 | Sensor | HC-SR04. |
 | Actuadores | Motor DC de dos terminales en el canal A de un L298N. El firmware incluye una salida de luz opcional. |
 | Enlace | Wi-Fi local WPA2 en punto de acceso de la ESP32. |
-| Responsabilidades | Distribución individual por confirmar con el equipo. |
+| Responsabilidades | **Diego Astudillo** · Desarrollo de la app Android, enlace Wi-Fi y visualización de telemetría e historial. **Anibal San Martin** · Montaje del prototipo, conexión del motor y del L298N, y alimentación con el portapilas. **Benjamin Inostroza** · Integración electrónica de la ESP32 con el HC-SR04, divisor de tensión y pruebas de detección y frenado. |
 
 ## 2. Esquema de conexiones
 
@@ -129,7 +129,7 @@ El puente se deshabilita entre órdenes y el motor se detiene ante un fallo. El 
 
 | Dispositivo | Android | Resultado |
 | --- | --- | --- |
-| vivo Y38 5G | Android 16 | El equipo confirmó que la lectura guardada durante un corte de Wi-Fi apareció en el historial al volver a conectar el teléfono con la ESP32 física. |
+| vivo Y38 5G | Android 16 | El equipo comprobó que el motor respondió a las órdenes de avance y retroceso, y que se detuvo al avanzar hacia un obstáculo detectado a menos de 15 cm. Al reconectar el teléfono con la ESP32, la lectura guardada durante el corte de Wi-Fi apareció en el historial. |
 | Android Emulator x86_64 | API 37 | Se verificaron instalación, telemetría con hora y recuperación de lecturas en SQLite tras una caída simulada. En 1.2 el historial quedó visible durante el corte. |
 
 ## 10. Cómo compilar y ejecutar
