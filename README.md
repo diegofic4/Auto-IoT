@@ -18,6 +18,8 @@
 
 [Esquema del prototipo](docs/esquema-esp32-es3.png)
 
+[Foto del montaje físico de la ES3](docs/evidencias/montaje-fisico-es3.jpeg)
+
 | Desde | Hacia | Detalle |
 | --- | --- | --- |
 | ESP32 `IO5` | HC-SR04 `TRIG` | Señal directa. |
